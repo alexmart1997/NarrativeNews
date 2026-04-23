@@ -18,3 +18,10 @@ def validate_parsed_article(parsed_article: ParsedArticle, *, min_body_length: i
         )
     if not parsed_article.published_at.strip():
         raise ParsedArticleValidationError("Parsed article published_at is empty.")
+
+
+def validate_normalized_article(*, title: str, body_text: str) -> None:
+    if not title.strip():
+        raise ParsedArticleValidationError("Normalized article title is empty.")
+    if not body_text.strip():
+        raise ParsedArticleValidationError("Normalized article body is empty.")

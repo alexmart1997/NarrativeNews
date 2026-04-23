@@ -46,6 +46,19 @@ class ArticleRepository(BaseRepository):
         row = self._fetch_one("SELECT * FROM articles WHERE url = ?", (url,))
         return self._row_to_article(row) if row else None
 
+    def get_article_by_content_hash(self, content_hash: str) -> Article | None:
+        row = self._fetch_one(
+            """
+            SELECT *
+            FROM articles
+            WHERE content_hash = ?
+            ORDER BY is_canonical DESC, id ASC
+            LIMIT 1
+            """,
+            (content_hash,),
+        )
+        return self._row_to_article(row) if row else None
+
     def list_articles_by_date_range(self, date_from: str, date_to: str) -> list[Article]:
         rows = self._fetch_all(
             """
@@ -99,6 +112,33 @@ class ArticleRepository(BaseRepository):
             (source_id, limit),
         )
         return [self._row_to_article(row) for row in rows]
+
+    def create_duplicate_record(
+        self,
+        *,
+        duplicate_group_id: str,
+        article_id: int,
+        duplicate_type: str,
+        is_primary: bool,
+        similarity_score: float | None = None,
+    ) -> int:
+        cursor = self.connection.execute(
+            """
+            INSERT INTO article_duplicates (
+                duplicate_group_id, article_id, duplicate_type, is_primary, similarity_score
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                duplicate_group_id,
+                article_id,
+                duplicate_type,
+                bool_to_int(is_primary),
+                similarity_score,
+            ),
+        )
+        self.connection.commit()
+        return int(cursor.lastrowid)
 
     @staticmethod
     def _row_to_article(row: sqlite3.Row) -> Article:

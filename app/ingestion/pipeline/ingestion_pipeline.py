@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 from dataclasses import dataclass
 
 from app.ingestion.discovery import RSSDiscoveryService, SectionPageDiscoveryService
 from app.ingestion.fetcher import FetchError, HttpFetcher
 from app.ingestion.parsers import get_article_parser
-from app.ingestion.pipeline.validation import ParsedArticleValidationError, validate_parsed_article
+from app.ingestion.pipeline.validation import (
+    ParsedArticleValidationError,
+    validate_normalized_article,
+    validate_parsed_article,
+)
 from app.ingestion.sources import SourceConfig
 from app.models import ArticleCreate, SourceCreate
 from app.repositories import ArticleRepository, SourceRepository
-from app.utils.text import estimate_word_count
+from app.services import ArticleNormalizer, DeduplicationService
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,7 @@ class IngestionRunResult:
     parsed_articles: int
     saved_articles: int
     skipped_existing: int
+    skipped_duplicates: int
     skipped_invalid: int
     failed_urls: int
 
@@ -36,6 +40,8 @@ class IngestionPipeline:
         article_repository: ArticleRepository,
         rss_discovery_service: RSSDiscoveryService | None = None,
         section_discovery_service: SectionPageDiscoveryService | None = None,
+        article_normalizer: ArticleNormalizer | None = None,
+        deduplication_service: DeduplicationService | None = None,
         min_body_length: int = 120,
     ) -> None:
         self.fetcher = fetcher
@@ -43,6 +49,8 @@ class IngestionPipeline:
         self.article_repository = article_repository
         self.rss_discovery_service = rss_discovery_service or RSSDiscoveryService(fetcher)
         self.section_discovery_service = section_discovery_service or SectionPageDiscoveryService(fetcher)
+        self.article_normalizer = article_normalizer or ArticleNormalizer()
+        self.deduplication_service = deduplication_service or DeduplicationService(article_repository)
         self.min_body_length = min_body_length
 
     def run_once(self, source_config: SourceConfig, *, limit: int | None = None) -> IngestionRunResult:
@@ -54,19 +62,21 @@ class IngestionPipeline:
         parsed_articles = 0
         saved_articles = 0
         skipped_existing = 0
+        skipped_duplicates = 0
         skipped_invalid = 0
         failed_urls = 0
 
         for url in candidate_urls:
-            if self.article_repository.get_article_by_url(url) is not None:
-                skipped_existing += 1
-                continue
-
             try:
                 response = self.fetcher.fetch(url)
                 fetched_urls += 1
                 parsed_article = parser.parse(response.text, url)
                 validate_parsed_article(parsed_article, min_body_length=self.min_body_length)
+                normalized_article = self.article_normalizer.normalize(parsed_article, url=url)
+                validate_normalized_article(
+                    title=normalized_article.title,
+                    body_text=normalized_article.body_text,
+                )
                 parsed_articles += 1
             except ParsedArticleValidationError:
                 skipped_invalid += 1
@@ -77,18 +87,36 @@ class IngestionPipeline:
                 logger.exception("Failed to ingest article %s", url)
                 continue
 
+            deduplication_result = self.deduplication_service.check_duplicate(normalized_article)
+            if deduplication_result.is_duplicate:
+                skipped_duplicates += 1
+                if deduplication_result.duplicate_type == "url":
+                    skipped_existing += 1
+                if (
+                    deduplication_result.canonical_article_id is not None
+                    and deduplication_result.duplicate_group_id is not None
+                ):
+                    self.article_repository.create_duplicate_record(
+                        duplicate_group_id=deduplication_result.duplicate_group_id,
+                        article_id=deduplication_result.canonical_article_id,
+                        duplicate_type=deduplication_result.duplicate_type or "unknown",
+                        is_primary=True,
+                        similarity_score=1.0,
+                    )
+                continue
+
             article = ArticleCreate(
                 source_id=source.id,
-                url=url,
-                title=parsed_article.title,
-                subtitle=parsed_article.subtitle,
-                body_text=parsed_article.body_text,
-                published_at=parsed_article.published_at,
-                author=parsed_article.author,
-                category=parsed_article.category,
+                url=normalized_article.url,
+                title=normalized_article.title,
+                subtitle=normalized_article.subtitle,
+                body_text=normalized_article.body_text,
+                published_at=normalized_article.published_at,
+                author=normalized_article.author,
+                category=normalized_article.category,
                 language="ru",
-                content_hash=self._compute_content_hash(parsed_article.body_text),
-                word_count=estimate_word_count(parsed_article.body_text),
+                content_hash=normalized_article.content_hash,
+                word_count=normalized_article.word_count,
                 is_canonical=True,
                 duplicate_group_id=None,
             )
@@ -106,6 +134,7 @@ class IngestionPipeline:
             parsed_articles=parsed_articles,
             saved_articles=saved_articles,
             skipped_existing=skipped_existing,
+            skipped_duplicates=skipped_duplicates,
             skipped_invalid=skipped_invalid,
             failed_urls=failed_urls,
         )
@@ -139,7 +168,3 @@ class IngestionPipeline:
                 is_active=True,
             )
         )
-
-    @staticmethod
-    def _compute_content_hash(body_text: str) -> str:
-        return hashlib.sha256(body_text.encode("utf-8")).hexdigest()
