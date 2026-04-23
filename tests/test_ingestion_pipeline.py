@@ -12,7 +12,7 @@ from app.ingestion.fetcher import FetchResult
 from app.ingestion.pipeline import IngestionPipeline
 from app.ingestion.sources import SourceConfig
 from app.models import ArticleCreate, SourceCreate
-from app.repositories import ArticleRepository, SourceRepository
+from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
 
 
 class MockFetcher:
@@ -36,6 +36,7 @@ class IngestionPipelineTests(unittest.TestCase):
         create_schema(self.connection)
         self.source_repo = SourceRepository(self.connection)
         self.article_repo = ArticleRepository(self.connection)
+        self.chunk_repo = ArticleChunkRepository(self.connection)
 
     def tearDown(self) -> None:
         self.connection.close()
@@ -62,6 +63,7 @@ class IngestionPipelineTests(unittest.TestCase):
             fetcher=fetcher,
             source_repository=self.source_repo,
             article_repository=self.article_repo,
+            article_chunk_repository=self.chunk_repo,
             min_body_length=80,
         )
         source_config = SourceConfig(
@@ -75,6 +77,7 @@ class IngestionPipelineTests(unittest.TestCase):
 
         result = pipeline.run_once(source_config, limit=5)
         saved_article = self.article_repo.get_article_by_url("https://lenta.ru/news/2026/04/23/example")
+        saved_chunks = self.chunk_repo.list_by_article_id(saved_article.id if saved_article else -1)
 
         self.assertEqual(result.discovered_urls, 1)
         self.assertEqual(result.saved_articles, 1)
@@ -83,6 +86,7 @@ class IngestionPipelineTests(unittest.TestCase):
         self.assertEqual(saved_article.title, "Лента сообщила о новой инициативе")
         self.assertTrue(saved_article.is_canonical)
         self.assertIsNone(saved_article.duplicate_group_id)
+        self.assertGreaterEqual(len(saved_chunks), 1)
 
     def test_pipeline_skips_duplicate_by_url(self) -> None:
         source = self.source_repo.create(
@@ -120,6 +124,7 @@ class IngestionPipelineTests(unittest.TestCase):
             fetcher=fetcher,
             source_repository=self.source_repo,
             article_repository=self.article_repo,
+            article_chunk_repository=self.chunk_repo,
             min_body_length=80,
         )
         source_config = SourceConfig(
@@ -180,6 +185,7 @@ class IngestionPipelineTests(unittest.TestCase):
             fetcher=fetcher,
             source_repository=self.source_repo,
             article_repository=self.article_repo,
+            article_chunk_repository=self.chunk_repo,
             min_body_length=80,
         )
         source_config = SourceConfig(

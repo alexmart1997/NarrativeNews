@@ -13,8 +13,8 @@ from app.ingestion.pipeline.validation import (
 )
 from app.ingestion.sources import SourceConfig
 from app.models import ArticleCreate, SourceCreate
-from app.repositories import ArticleRepository, SourceRepository
-from app.services import ArticleNormalizer, DeduplicationService
+from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
+from app.services import ArticleNormalizer, ChunkingService, DeduplicationService
 
 logger = logging.getLogger(__name__)
 
@@ -38,19 +38,23 @@ class IngestionPipeline:
         fetcher: HttpFetcher,
         source_repository: SourceRepository,
         article_repository: ArticleRepository,
+        article_chunk_repository: ArticleChunkRepository | None = None,
         rss_discovery_service: RSSDiscoveryService | None = None,
         section_discovery_service: SectionPageDiscoveryService | None = None,
         article_normalizer: ArticleNormalizer | None = None,
         deduplication_service: DeduplicationService | None = None,
+        chunking_service: ChunkingService | None = None,
         min_body_length: int = 120,
     ) -> None:
         self.fetcher = fetcher
         self.source_repository = source_repository
         self.article_repository = article_repository
+        self.article_chunk_repository = article_chunk_repository
         self.rss_discovery_service = rss_discovery_service or RSSDiscoveryService(fetcher)
         self.section_discovery_service = section_discovery_service or SectionPageDiscoveryService(fetcher)
         self.article_normalizer = article_normalizer or ArticleNormalizer()
         self.deduplication_service = deduplication_service or DeduplicationService(article_repository)
+        self.chunking_service = chunking_service or ChunkingService()
         self.min_body_length = min_body_length
 
     def run_once(self, source_config: SourceConfig, *, limit: int | None = None) -> IngestionRunResult:
@@ -122,7 +126,11 @@ class IngestionPipeline:
             )
 
             try:
-                self.article_repository.create_article(article)
+                saved_article = self.article_repository.create_article(article)
+                if self.article_chunk_repository is not None and saved_article.is_canonical:
+                    chunks = self.chunking_service.chunk_article(saved_article)
+                    if chunks:
+                        self.article_chunk_repository.create_many(chunks)
                 saved_articles += 1
             except Exception:
                 failed_urls += 1
