@@ -7,18 +7,32 @@ from pathlib import Path
 
 from app.db.connection import create_connection
 from app.db.schema import create_schema
-from app.models import ArticleCreate, ChunkSearchResult, SourceCreate
+from app.models import ArticleCreate, SourceCreate
 from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
 from app.services import BaseLLMClient, ChunkingService, RAGService
 
 
 class MockLLMClient(BaseLLMClient):
     def __init__(self) -> None:
-        self.calls: list[tuple[str, list[ChunkSearchResult]]] = []
+        self.calls: list[dict[str, object]] = []
 
-    def generate_answer(self, query: str, chunks: list[ChunkSearchResult]) -> str:
-        self.calls.append((query, chunks))
-        return f"Сводка по запросу: {query}. Использовано чанков: {len(chunks)}."
+    def generate_text(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system_prompt": system_prompt,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+        )
+        return "Сводка по найденным фрагментам."
 
 
 class RetrievalTests(unittest.TestCase):
@@ -120,7 +134,7 @@ class RetrievalTests(unittest.TestCase):
             include_debug_chunks=True,
         )
 
-        self.assertIn("Сводка по запросу: инфляция", result.summary_text)
+        self.assertEqual(result.summary_text, "Сводка по найденным фрагментам.")
         self.assertGreaterEqual(len(result.source_articles), 2)
         self.assertEqual({article.id for article in result.source_articles[:2]}, {article_one.id, article_two.id})
         self.assertIsNotNone(result.top_chunks)
@@ -140,10 +154,7 @@ class RetrievalTests(unittest.TestCase):
         )
 
         self.assertEqual(len(self.mock_llm.calls), 1)
-        query, chunks = self.mock_llm.calls[0]
-        self.assertEqual(query, "Инфляция")
-        self.assertGreaterEqual(len(chunks), 1)
-        self.assertTrue(all(isinstance(chunk, ChunkSearchResult) for chunk in chunks))
+        self.assertIn("Запрос: Инфляция", self.mock_llm.calls[0]["prompt"])
 
 
 if __name__ == "__main__":

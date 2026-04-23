@@ -21,6 +21,7 @@ from app.repositories import (
     NarrativeResultRepository,
     NarrativeRunRepository,
 )
+from app.services.narrative_labeling import NarrativeLabelingService
 
 
 class NarrativeScorer:
@@ -110,6 +111,7 @@ class NarrativeRunService:
         narrative_result_repository: NarrativeResultRepository,
         claim_grouper: ClaimGrouper | None = None,
         narrative_scorer: NarrativeScorer | None = None,
+        narrative_labeling_service: NarrativeLabelingService | None = None,
     ) -> None:
         self.article_repository = article_repository
         self.claim_repository = claim_repository
@@ -118,6 +120,7 @@ class NarrativeRunService:
         self.narrative_result_repository = narrative_result_repository
         self.narrative_scorer = narrative_scorer or NarrativeScorer()
         self.claim_grouper = claim_grouper or ClaimGrouper(self.narrative_scorer)
+        self.narrative_labeling_service = narrative_labeling_service or NarrativeLabelingService()
 
     def run(self, topic_text: str, date_from: str, date_to: str) -> dict[str, object]:
         run = self.narrative_run_repository.create(
@@ -170,11 +173,7 @@ class NarrativeRunService:
         for claim in claims:
             claim_haystack = " ".join(
                 value.lower()
-                for value in (
-                    claim.normalized_claim_text,
-                    claim.claim_text,
-                    claim.source_sentence,
-                )
+                for value in (claim.normalized_claim_text, claim.claim_text, claim.source_sentence)
                 if value
             )
             article = articles_by_id.get(claim.article_id)
@@ -238,13 +237,14 @@ class NarrativeRunService:
             if selected is None:
                 continue
             _cluster_id, cluster = selected
+            label = self.narrative_labeling_service.label_cluster(cluster)
             result = self.narrative_result_repository.create(
                 NarrativeResultCreate(
                     run_id=run_id,
                     narrative_type=narrative_type,
-                    title=cluster.representative_text,
-                    formulation=cluster.representative_text,
-                    explanation=self._build_explanation(cluster),
+                    title=label.title,
+                    formulation=label.formulation,
+                    explanation=label.explanation,
                     strength_score=cluster.cluster_score,
                 )
             )
@@ -262,10 +262,3 @@ class NarrativeRunService:
             )
             created_results.append(result)
         return created_results
-
-    @staticmethod
-    def _build_explanation(cluster: GroupedClaimCluster) -> str:
-        return (
-            f"Cluster groups {len(cluster.claims)} claims from {len(cluster.articles)} articles "
-            f"for the {cluster.claim_type} narrative type."
-        )

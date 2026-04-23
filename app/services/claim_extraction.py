@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
-from abc import ABC, abstractmethod
 
 from app.models import Article, ClaimCreate, ClaimDraft, SentenceContext
+from app.services.llm import BaseLLMClient, LLMError
 
 
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -19,13 +20,7 @@ TECHNICAL_PREFIXES = (
 CLAIM_TYPES = {"predictive", "causal", "meta", "other"}
 
 
-class BaseClaimLLMClient(ABC):
-    @abstractmethod
-    def extract_claims(self, article: Article, sentences: list[SentenceContext]) -> list[ClaimDraft]:
-        raise NotImplementedError
-
-
-class SimpleHeuristicClaimLLMClient(BaseClaimLLMClient):
+class SimpleHeuristicClaimLLMClient:
     def extract_claims(self, article: Article, sentences: list[SentenceContext]) -> list[ClaimDraft]:
         drafts: list[ClaimDraft] = []
         for context in sentences:
@@ -125,16 +120,71 @@ class SimpleHeuristicClaimLLMClient(BaseClaimLLMClient):
 
 
 class ClaimExtractor:
-    def __init__(self, llm_client: BaseClaimLLMClient | None = None) -> None:
-        self.llm_client = llm_client or SimpleHeuristicClaimLLMClient()
+    def __init__(self, llm_client: BaseLLMClient | None = None) -> None:
+        self.llm_client = llm_client
+        self.heuristic_client = SimpleHeuristicClaimLLMClient()
 
     def extract(self, article: Article) -> list[ClaimCreate]:
         if not article.is_canonical:
             return []
 
         sentences = self._split_article_into_sentences(article.body_text)
-        drafts = self.llm_client.extract_claims(article, sentences)
+        drafts = self._extract_drafts(article, sentences)
         return self._postprocess_drafts(article.id, drafts)
+
+    def _extract_drafts(self, article: Article, sentences: list[SentenceContext]) -> list[ClaimDraft]:
+        if self.llm_client is None:
+            return self.heuristic_client.extract_claims(article, sentences)
+
+        prompt = self._build_prompt(article, sentences)
+        system_prompt = (
+            "Ты извлекаешь claims из новостной статьи. Возвращай JSON-объект вида "
+            "{\"claims\": [{\"claim_text\": ..., \"normalized_claim_text\": ..., \"claim_type\": ..., "
+            "\"extraction_confidence\": 0.0, \"classification_confidence\": 0.0, "
+            "\"source_sentence\": ..., \"source_paragraph_index\": 0}]} "
+            "Извлекай только короткие смысловые claims, не перечисляй все предложения, "
+            "не придумывай факты, technical и пустые фразы исключай."
+        )
+        try:
+            payload = self.llm_client.generate_json(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.1,
+                max_tokens=500,
+            )
+        except LLMError:
+            return self.heuristic_client.extract_claims(article, sentences)
+
+        raw_claims = payload.get("claims", [])
+        if not isinstance(raw_claims, list):
+            return self.heuristic_client.extract_claims(article, sentences)
+
+        drafts: list[ClaimDraft] = []
+        for item in raw_claims:
+            if not isinstance(item, dict):
+                continue
+            drafts.append(
+                ClaimDraft(
+                    claim_text=str(item.get("claim_text", "")).strip(),
+                    normalized_claim_text=str(item.get("normalized_claim_text", "")).strip(),
+                    claim_type=str(item.get("claim_type", "other")).strip() or "other",
+                    extraction_confidence=self._to_float(item.get("extraction_confidence")),
+                    classification_confidence=self._to_float(item.get("classification_confidence")),
+                    source_sentence=str(item.get("source_sentence", "")).strip() or None,
+                    source_paragraph_index=self._to_int(item.get("source_paragraph_index")),
+                )
+            )
+        return drafts or self.heuristic_client.extract_claims(article, sentences)
+
+    def _build_prompt(self, article: Article, sentences: list[SentenceContext]) -> str:
+        lines = [f"Статья: {article.title}", "", "Кандидатные предложения:"]
+        for index, context in enumerate(sentences[:20], start=1):
+            lines.append(
+                f"{index}. [paragraph={context.paragraph_index}] {context.sentence_text}"
+            )
+        lines.append("")
+        lines.append("Верни JSON с лучшими claims по этим предложениям.")
+        return "\n".join(lines)
 
     def _split_article_into_sentences(self, body_text: str) -> list[SentenceContext]:
         contexts: list[SentenceContext] = []
@@ -194,3 +244,17 @@ class ClaimExtractor:
         if claim_type not in CLAIM_TYPES:
             return False
         return True
+
+    @staticmethod
+    def _to_float(value: object) -> float | None:
+        try:
+            return None if value is None else float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _to_int(value: object) -> int | None:
+        try:
+            return None if value is None else int(value)
+        except (TypeError, ValueError):
+            return None

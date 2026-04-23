@@ -16,7 +16,31 @@ from app.repositories import (
     NarrativeRunRepository,
     SourceRepository,
 )
-from app.services import ClaimGrouper, NarrativeRunService, NarrativeScorer
+from app.services import (
+    BaseNarrativeLabelingLLMClient,
+    ClaimGrouper,
+    NarrativeLabel,
+    NarrativeLabelingService,
+    NarrativeRunService,
+    NarrativeScorer,
+)
+
+
+class MockNarrativeRunLabelingLLMClient(BaseNarrativeLabelingLLMClient):
+    def generate_narrative_label(
+        self,
+        *,
+        narrative_type: str,
+        cluster_summary: str,
+        representative_claims: list[str],
+        article_count: int,
+        claim_count: int,
+    ) -> NarrativeLabel:
+        return NarrativeLabel(
+            title=f"{narrative_type} label",
+            formulation=f"{cluster_summary}.",
+            explanation=f"Generated from {claim_count} claims across {article_count} articles.",
+        )
 
 
 class NarrativeRunTests(unittest.TestCase):
@@ -40,6 +64,9 @@ class NarrativeRunTests(unittest.TestCase):
             narrative_result_repository=self.result_repo,
             claim_grouper=ClaimGrouper(),
             narrative_scorer=NarrativeScorer(),
+            narrative_labeling_service=NarrativeLabelingService(
+                llm_client=MockNarrativeRunLabelingLLMClient()
+            ),
         )
 
     def tearDown(self) -> None:
@@ -185,8 +212,4 @@ class NarrativeRunTests(unittest.TestCase):
 
         self.assertEqual({item.narrative_type for item in saved_results}, {"predictive", "causal", "meta"})
         predictive = next(item for item in saved_results if item.narrative_type == "predictive")
-        self.assertEqual(predictive.title, "инфляция вырастет к лету")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertEqual(predictive.title, "predictive label")

@@ -7,19 +7,36 @@ from pathlib import Path
 
 from app.db.connection import create_connection
 from app.db.schema import create_schema
-from app.models import ArticleCreate, ClaimDraft, SentenceContext, SourceCreate
+from app.models import ArticleCreate, SourceCreate
 from app.repositories import ArticleRepository, ClaimRepository, SourceRepository
-from app.services import BaseClaimLLMClient, ClaimExtractor
+from app.services import BaseLLMClient, ClaimExtractor
 
 
-class MockClaimLLMClient(BaseClaimLLMClient):
-    def __init__(self, drafts: list[ClaimDraft]) -> None:
-        self.drafts = drafts
-        self.calls: list[tuple[int, list[SentenceContext]]] = []
+class MockClaimLLMClient(BaseLLMClient):
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.calls: list[str] = []
 
-    def extract_claims(self, article, sentences: list[SentenceContext]) -> list[ClaimDraft]:
-        self.calls.append((article.id, sentences))
-        return self.drafts
+    def generate_text(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        raise AssertionError("generate_text should not be called directly in this test")
+
+    def generate_json(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> dict[str, object]:
+        self.calls.append(prompt)
+        return self.payload
 
 
 class ClaimExtractionTests(unittest.TestCase):
@@ -67,33 +84,35 @@ class ClaimExtractionTests(unittest.TestCase):
 
     def test_extraction_from_single_article(self) -> None:
         article = self._create_article()
-        mock_llm = MockClaimLLMClient(
-            drafts=[
-                ClaimDraft(
-                    claim_text="Министр заявил, что поставки вырастут к осени.",
-                    normalized_claim_text="Поставки вырастут к осени",
-                    claim_type="predictive",
-                    extraction_confidence=0.9,
-                    classification_confidence=0.88,
-                    source_sentence="Министр заявил, что поставки вырастут к осени.",
-                    source_paragraph_index=0,
-                ),
-                ClaimDraft(
-                    claim_text="Поделиться новостью.",
-                    normalized_claim_text="Поделиться новостью",
-                    claim_type="other",
-                    extraction_confidence=0.2,
-                    classification_confidence=0.2,
-                    source_sentence="Поделиться новостью.",
-                    source_paragraph_index=1,
-                ),
-            ]
+        extractor = ClaimExtractor(
+            llm_client=MockClaimLLMClient(
+                {
+                    "claims": [
+                        {
+                            "claim_text": "Министр заявил, что поставки вырастут к осени.",
+                            "normalized_claim_text": "Поставки вырастут к осени",
+                            "claim_type": "predictive",
+                            "extraction_confidence": 0.9,
+                            "classification_confidence": 0.88,
+                            "source_sentence": "Министр заявил, что поставки вырастут к осени.",
+                            "source_paragraph_index": 0,
+                        },
+                        {
+                            "claim_text": "Поделиться новостью.",
+                            "normalized_claim_text": "Поделиться новостью",
+                            "claim_type": "other",
+                            "extraction_confidence": 0.2,
+                            "classification_confidence": 0.2,
+                            "source_sentence": "Поделиться новостью.",
+                            "source_paragraph_index": 1,
+                        },
+                    ]
+                }
+            )
         )
-        extractor = ClaimExtractor(llm_client=mock_llm)
 
         claims = extractor.extract(article)
 
-        self.assertEqual(len(mock_llm.calls), 1)
         self.assertEqual(len(claims), 1)
         self.assertEqual(claims[0].claim_type, "predictive")
         self.assertEqual(claims[0].normalized_claim_text, "Поставки вырастут к осени")
@@ -102,17 +121,19 @@ class ClaimExtractionTests(unittest.TestCase):
         article = self._create_article()
         extractor = ClaimExtractor(
             llm_client=MockClaimLLMClient(
-                drafts=[
-                    ClaimDraft(
-                        claim_text="Это должно снизить дефицит на рынке.",
-                        normalized_claim_text="Снижение дефицита на рынке",
-                        claim_type="causal",
-                        extraction_confidence=0.85,
-                        classification_confidence=0.83,
-                        source_sentence="Это должно снизить дефицит на рынке.",
-                        source_paragraph_index=0,
-                    )
-                ]
+                {
+                    "claims": [
+                        {
+                            "claim_text": "Это должно снизить дефицит на рынке.",
+                            "normalized_claim_text": "Снижение дефицита на рынке",
+                            "claim_type": "causal",
+                            "extraction_confidence": 0.85,
+                            "classification_confidence": 0.83,
+                            "source_sentence": "Это должно снизить дефицит на рынке.",
+                            "source_paragraph_index": 0,
+                        }
+                    ]
+                }
             )
         )
 
@@ -127,13 +148,15 @@ class ClaimExtractionTests(unittest.TestCase):
         article = self._create_article(is_canonical=False)
         extractor = ClaimExtractor(
             llm_client=MockClaimLLMClient(
-                drafts=[
-                    ClaimDraft(
-                        claim_text="Аналитики считают, что меры приведут к снижению цен.",
-                        normalized_claim_text="Меры приведут к снижению цен",
-                        claim_type="causal",
-                    )
-                ]
+                {
+                    "claims": [
+                        {
+                            "claim_text": "Аналитики считают, что меры приведут к снижению цен.",
+                            "normalized_claim_text": "Меры приведут к снижению цен",
+                            "claim_type": "causal",
+                        }
+                    ]
+                }
             )
         )
 
