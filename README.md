@@ -27,3 +27,9 @@ python -m unittest discover -s tests -v
 python -m app ingest-source lenta --limit 5
 python -m app ingest-source ria --limit 5
 ```
+
+## Streamlit MVP
+
+```bash
+streamlit run streamlit_app.py
+```

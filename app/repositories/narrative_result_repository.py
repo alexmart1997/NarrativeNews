@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.models import NarrativeResult, NarrativeResultArticleCreate, NarrativeResultCreate
+from app.models import Article, NarrativeResult, NarrativeResultArticleCreate, NarrativeResultCreate
 from app.repositories.base import BaseRepository
 
 
@@ -51,6 +51,19 @@ class NarrativeResultRepository(BaseRepository):
         )
         return [self._row_to_result(row) for row in rows]
 
+    def list_articles_for_result(self, narrative_result_id: int) -> list[Article]:
+        rows = self._fetch_all(
+            """
+            SELECT a.*
+            FROM narrative_result_articles nra
+            INNER JOIN articles a ON a.id = nra.article_id
+            WHERE nra.narrative_result_id = ?
+            ORDER BY nra.rank ASC, a.id ASC
+            """,
+            (narrative_result_id,),
+        )
+        return [self._row_to_article(row) for row in rows]
+
     @staticmethod
     def _row_to_result(row: sqlite3.Row) -> NarrativeResult:
         return NarrativeResult(
@@ -62,4 +75,25 @@ class NarrativeResultRepository(BaseRepository):
             explanation=row["explanation"],
             strength_score=row["strength_score"],
             created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _row_to_article(row: sqlite3.Row) -> Article:
+        return Article(
+            id=row["id"],
+            source_id=row["source_id"],
+            url=row["url"],
+            title=row["title"],
+            subtitle=row["subtitle"],
+            body_text=row["body_text"],
+            published_at=row["published_at"],
+            author=row["author"],
+            category=row["category"],
+            language=row["language"],
+            content_hash=row["content_hash"],
+            word_count=row["word_count"],
+            is_canonical=bool(row["is_canonical"]),
+            duplicate_group_id=row["duplicate_group_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )

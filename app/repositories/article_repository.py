@@ -59,6 +59,16 @@ class ArticleRepository(BaseRepository):
         )
         return self._row_to_article(row) if row else None
 
+    def list_by_ids(self, article_ids: list[int]) -> list[Article]:
+        if not article_ids:
+            return []
+        placeholders = ", ".join(["?"] * len(article_ids))
+        rows = self._fetch_all(
+            f"SELECT * FROM articles WHERE id IN ({placeholders}) ORDER BY published_at DESC, id DESC",
+            tuple(article_ids),
+        )
+        return [self._row_to_article(row) for row in rows]
+
     def list_articles_by_date_range(self, date_from: str, date_to: str) -> list[Article]:
         rows = self._fetch_all(
             """

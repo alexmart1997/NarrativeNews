@@ -12,3 +12,4 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = []
+ui = ["streamlit>=1.35"]
