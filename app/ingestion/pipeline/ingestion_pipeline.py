@@ -47,6 +47,8 @@ class IngestionPipeline:
         chunking_service: ChunkingService | None = None,
         claim_extractor: ClaimExtractor | None = None,
         min_body_length: int = 120,
+        enable_chunking: bool = True,
+        enable_claim_extraction: bool = True,
     ) -> None:
         self.fetcher = fetcher
         self.source_repository = source_repository
@@ -60,6 +62,8 @@ class IngestionPipeline:
         self.chunking_service = chunking_service or ChunkingService()
         self.claim_extractor = claim_extractor or ClaimExtractor()
         self.min_body_length = min_body_length
+        self.enable_chunking = enable_chunking
+        self.enable_claim_extraction = enable_claim_extraction
 
     def run_once(self, source_config: SourceConfig, *, limit: int | None = None) -> IngestionRunResult:
         source = self._get_or_create_source(source_config)
@@ -131,11 +135,19 @@ class IngestionPipeline:
 
             try:
                 saved_article = self.article_repository.create_article(article)
-                if self.article_chunk_repository is not None and saved_article.is_canonical:
+                if (
+                    self.enable_chunking
+                    and self.article_chunk_repository is not None
+                    and saved_article.is_canonical
+                ):
                     chunks = self.chunking_service.chunk_article(saved_article)
                     if chunks:
                         self.article_chunk_repository.create_many(chunks)
-                if self.claim_repository is not None and saved_article.is_canonical:
+                if (
+                    self.enable_claim_extraction
+                    and self.claim_repository is not None
+                    and saved_article.is_canonical
+                ):
                     claims = self.claim_extractor.extract(saved_article)
                     if claims:
                         self.claim_repository.create_many(claims)

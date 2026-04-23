@@ -28,6 +28,16 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("source_name", choices=sorted(SOURCE_CONFIGS.keys()))
     ingest_parser.add_argument("--db-path", type=Path, default=None)
     ingest_parser.add_argument("--limit", type=int, default=10)
+    ingest_parser.add_argument(
+        "--skip-chunks",
+        action="store_true",
+        help="Skip chunk generation during ingestion.",
+    )
+    ingest_parser.add_argument(
+        "--skip-claims",
+        action="store_true",
+        help="Skip claim extraction during ingestion.",
+    )
 
     return parser
 
@@ -51,6 +61,8 @@ def main() -> int:
                 article_repository=ArticleRepository(connection),
                 article_chunk_repository=ArticleChunkRepository(connection),
                 claim_repository=ClaimRepository(connection),
+                enable_chunking=not args.skip_chunks,
+                enable_claim_extraction=not args.skip_claims,
             )
             result = pipeline.run_once(get_source_config(args.source_name), limit=args.limit)
         print(result)
