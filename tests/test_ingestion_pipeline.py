@@ -53,6 +53,7 @@ class IngestionPipelineTests(unittest.TestCase):
 <rss version="2.0">
   <channel>
     <title>Lenta</title>
+    <link>https://lenta.ru</link>
     <item>
       <link>{article_url}</link>
     </item>
@@ -91,6 +92,46 @@ class IngestionPipelineTests(unittest.TestCase):
         self.assertIsNone(saved_article.duplicate_group_id)
         self.assertGreaterEqual(len(saved_chunks), 1)
         self.assertGreaterEqual(len(saved_claims), 1)
+
+    def test_pipeline_ignores_channel_link_and_root_url(self) -> None:
+        rss_url = "https://lenta.ru/rss"
+        article_url = "https://lenta.ru/news/2026/04/23/example/"
+        rss_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Lenta</title>
+    <link>https://lenta.ru</link>
+    <item>
+      <title>Example</title>
+      <link>{article_url}</link>
+    </item>
+  </channel>
+</rss>
+"""
+        fetcher = MockFetcher({rss_url: rss_payload, article_url: self._read_sample("lenta_article.html")})
+        pipeline = IngestionPipeline(
+            fetcher=fetcher,
+            source_repository=self.source_repo,
+            article_repository=self.article_repo,
+            article_chunk_repository=self.chunk_repo,
+            claim_repository=self.claim_repo,
+            min_body_length=80,
+        )
+        source_config = SourceConfig(
+            name="Lenta.ru",
+            domain="lenta.ru",
+            base_url="https://lenta.ru",
+            rss_urls=(rss_url,),
+            section_urls=(),
+            parser_type="lenta",
+        )
+
+        result = pipeline.run_once(source_config, limit=5)
+
+        self.assertEqual(result.discovered_urls, 1)
+        self.assertIsNotNone(
+            self.article_repo.get_article_by_url("https://lenta.ru/news/2026/04/23/example")
+        )
 
     def test_pipeline_skips_duplicate_by_url(self) -> None:
         source = self.source_repo.create(

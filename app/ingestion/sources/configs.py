@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,6 +12,7 @@ class SourceConfig:
     rss_urls: tuple[str, ...] = field(default_factory=tuple)
     section_urls: tuple[str, ...] = field(default_factory=tuple)
     parser_type: str = ""
+    article_url_patterns: tuple[str, ...] = field(default_factory=tuple)
 
 
 SOURCE_CONFIGS: dict[str, SourceConfig] = {
@@ -27,6 +29,10 @@ SOURCE_CONFIGS: dict[str, SourceConfig] = {
             "https://lenta.ru/rubrics/russia/",
         ),
         parser_type="lenta",
+        article_url_patterns=(
+            r"^https?://lenta\.ru/news/\d{4}/\d{2}/\d{2}/[^/]+/?$",
+            r"^https?://lenta\.ru/articles/\d{4}/\d{2}/\d{2}/[^/]+/?$",
+        ),
     ),
     "ria": SourceConfig(
         name="РИА Новости",
@@ -41,6 +47,10 @@ SOURCE_CONFIGS: dict[str, SourceConfig] = {
             "https://ria.ru/politics/",
         ),
         parser_type="ria",
+        article_url_patterns=(
+            r"^https?://ria\.ru/\d{8}/[^/]+\.html$",
+            r"^https?://ria\.ru/\d{8}/[^/]+/?$",
+        ),
     ),
 }
 
