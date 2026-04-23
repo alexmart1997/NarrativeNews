@@ -57,6 +57,24 @@ class ClaimRepository(BaseRepository):
         )
         return [self._row_to_claim(row) for row in rows]
 
+    def list_for_article_ids(
+        self,
+        article_ids: list[int],
+        *,
+        exclude_claim_type: str | None = None,
+    ) -> list[Claim]:
+        if not article_ids:
+            return []
+        placeholders = ", ".join(["?"] * len(article_ids))
+        query = f"SELECT * FROM claims WHERE article_id IN ({placeholders})"
+        params: list[object] = list(article_ids)
+        if exclude_claim_type is not None:
+            query += " AND claim_type != ?"
+            params.append(exclude_claim_type)
+        query += " ORDER BY id ASC"
+        rows = self._fetch_all(query, tuple(params))
+        return [self._row_to_claim(row) for row in rows]
+
     @staticmethod
     def _row_to_claim(row: sqlite3.Row) -> Claim:
         return Claim(

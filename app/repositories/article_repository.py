@@ -83,6 +83,36 @@ class ArticleRepository(BaseRepository):
         )
         return [self._row_to_article(row) for row in rows]
 
+    def search_canonical_articles_by_topic_and_date_range(
+        self,
+        topic_text: str,
+        date_from: str,
+        date_to: str,
+        limit: int = 100,
+    ) -> list[Article]:
+        tokens = [token.strip() for token in topic_text.split() if token.strip()]
+        articles = self.list_canonical_articles_by_date_range(date_from, date_to)
+        if not tokens:
+            return articles[:limit]
+
+        filtered: list[Article] = []
+        for article in articles:
+            haystack = " ".join(
+                value.lower()
+                for value in (
+                    article.title,
+                    article.subtitle,
+                    article.body_text,
+                    article.category,
+                )
+                if value
+            )
+            if any(token.lower() in haystack for token in tokens):
+                filtered.append(article)
+
+        filtered.sort(key=lambda article: (article.published_at, article.id), reverse=True)
+        return filtered[:limit]
+
     def mark_article_canonical(
         self,
         article_id: int,

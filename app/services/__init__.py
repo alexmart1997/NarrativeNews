@@ -2,6 +2,7 @@ from app.services.claim_extraction import BaseClaimLLMClient, ClaimExtractor, Si
 from app.services.chunking import ChunkingConfig, ChunkingService
 from app.services.deduplication import DeduplicationResult, DeduplicationService
 from app.services.llm import BaseLLMClient, SimpleExtractiveLLMClient
+from app.services.narrative import ClaimGrouper, NarrativeRunService, NarrativeScorer
 from app.services.normalization import ArticleNormalizer, NormalizedArticle
 from app.services.rag import RAGSearchResult, RAGService
 
@@ -10,10 +11,13 @@ __all__ = [
     "BaseClaimLLMClient",
     "BaseLLMClient",
     "ClaimExtractor",
+    "ClaimGrouper",
     "ChunkingConfig",
     "ChunkingService",
     "DeduplicationResult",
     "DeduplicationService",
+    "NarrativeRunService",
+    "NarrativeScorer",
     "NormalizedArticle",
     "RAGSearchResult",
     "RAGService",
