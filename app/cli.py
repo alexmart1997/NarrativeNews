@@ -10,7 +10,7 @@ from app.db.connection import create_connection
 from app.ingestion.fetcher import HttpFetcher
 from app.ingestion.pipeline import IngestionPipeline
 from app.ingestion.sources import SOURCE_CONFIGS, get_source_config
-from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
+from app.repositories import ArticleChunkRepository, ArticleRepository, ClaimRepository, SourceRepository
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +50,7 @@ def main() -> int:
                 source_repository=SourceRepository(connection),
                 article_repository=ArticleRepository(connection),
                 article_chunk_repository=ArticleChunkRepository(connection),
+                claim_repository=ClaimRepository(connection),
             )
             result = pipeline.run_once(get_source_config(args.source_name), limit=args.limit)
         print(result)

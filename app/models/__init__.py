@@ -8,6 +8,7 @@ from app.models.entities import (
     Source,
     SourceCreate,
 )
+from app.models.claims_extraction import ClaimDraft, SentenceContext
 from app.models.rag import ArticleChunk, ArticleChunkCreate, ChunkSearchResult, RAGAnswerResult
 
 __all__ = [
@@ -16,11 +17,13 @@ __all__ = [
     "ArticleChunk",
     "ArticleChunkCreate",
     "Claim",
+    "ClaimDraft",
     "ClaimCreate",
     "ChunkSearchResult",
     "RAGAnswerResult",
     "NarrativeRun",
     "NarrativeRunCreate",
+    "SentenceContext",
     "Source",
     "SourceCreate",
 ]

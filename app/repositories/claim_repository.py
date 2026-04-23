@@ -33,6 +33,12 @@ class ClaimRepository(BaseRepository):
             raise RuntimeError("Created claim could not be loaded back from the database.")
         return claim
 
+    def create_many(self, payloads: list[ClaimCreate]) -> list[Claim]:
+        created: list[Claim] = []
+        for payload in payloads:
+            created.append(self.create(payload))
+        return created
+
     def get_by_id(self, claim_id: int) -> Claim | None:
         row = self._fetch_one("SELECT * FROM claims WHERE id = ?", (claim_id,))
         return self._row_to_claim(row) if row else None
