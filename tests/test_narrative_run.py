@@ -16,31 +16,45 @@ from app.repositories import (
     NarrativeRunRepository,
     SourceRepository,
 )
-from app.services import (
-    BaseNarrativeLabelingLLMClient,
-    ClaimGrouper,
-    NarrativeLabel,
-    NarrativeLabelingService,
-    NarrativeRunService,
-    NarrativeScorer,
-)
+from app.services import BaseLLMClient, ClaimGrouper, NarrativeLabelingService, NarrativeRunService, NarrativeScorer
 
 
-class MockNarrativeRunLabelingLLMClient(BaseNarrativeLabelingLLMClient):
-    def generate_narrative_label(
+class MockNarrativeRunLabelingLLMClient(BaseLLMClient):
+    def generate_text(
         self,
+        prompt: str,
         *,
-        narrative_type: str,
-        cluster_summary: str,
-        representative_claims: list[str],
-        article_count: int,
-        claim_count: int,
-    ) -> NarrativeLabel:
-        return NarrativeLabel(
-            title=f"{narrative_type} label",
-            formulation=f"{cluster_summary}.",
-            explanation=f"Generated from {claim_count} claims across {article_count} articles.",
-        )
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        raise AssertionError("generate_text should not be called in this test")
+
+    def generate_json(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> dict[str, object]:
+        if "predictive" in prompt:
+            return {
+                "title": "predictive label",
+                "formulation": "predictive formulation",
+                "explanation": "predictive explanation",
+            }
+        if "causal" in prompt:
+            return {
+                "title": "causal label",
+                "formulation": "causal formulation",
+                "explanation": "causal explanation",
+            }
+        return {
+            "title": "meta label",
+            "formulation": "meta formulation",
+            "explanation": "meta explanation",
+        }
 
 
 class NarrativeRunTests(unittest.TestCase):
@@ -213,3 +227,7 @@ class NarrativeRunTests(unittest.TestCase):
         self.assertEqual({item.narrative_type for item in saved_results}, {"predictive", "causal", "meta"})
         predictive = next(item for item in saved_results if item.narrative_type == "predictive")
         self.assertEqual(predictive.title, "predictive label")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -30,7 +30,7 @@ class NarrativeLabelingService:
                 temperature=0.2,
                 max_tokens=220,
             )
-        except LLMError:
+        except Exception:
             return self._fallback_label(cluster)
 
         label = NarrativeLabel(

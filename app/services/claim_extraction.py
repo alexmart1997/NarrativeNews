@@ -152,7 +152,7 @@ class ClaimExtractor:
                 temperature=0.1,
                 max_tokens=500,
             )
-        except LLMError:
+        except Exception:
             return self.heuristic_client.extract_claims(article, sentences)
 
         raw_claims = payload.get("claims", [])

@@ -96,7 +96,16 @@ class LocalLlamaClient(BaseLLMClient):
         try:
             with urlopen(request, timeout=self.config.timeout_seconds) as response:
                 body = response.read().decode("utf-8")
-        except (HTTPError, URLError, TimeoutError) as exc:
+        except HTTPError as exc:
+            error_body = ""
+            try:
+                error_body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                error_body = ""
+            raise LLMError(
+                f"Local Llama server returned HTTP {exc.code}: {error_body or exc.reason}"
+            ) from exc
+        except (URLError, TimeoutError) as exc:
             raise LLMError("Local Llama server is unavailable.") from exc
 
         try:

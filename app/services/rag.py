@@ -79,7 +79,7 @@ class RAGService:
                 temperature=0.2,
                 max_tokens=220,
             )
-        except LLMError:
+        except Exception:
             return self._fallback_summary(chunks)
 
         return text.strip() or self._fallback_summary(chunks)
