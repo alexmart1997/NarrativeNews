@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.models.entities import Article
+
 
 @dataclass(slots=True)
 class ArticleChunkCreate:
@@ -28,3 +30,10 @@ class ChunkSearchResult:
     published_at: str
     article_title: str
     match_score: int
+
+
+@dataclass(frozen=True, slots=True)
+class RAGAnswerResult:
+    summary_text: str
+    source_articles: list[Article]
+    top_chunks: list[ChunkSearchResult] | None = None

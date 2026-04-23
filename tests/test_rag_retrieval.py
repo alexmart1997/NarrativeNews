@@ -7,9 +7,18 @@ from pathlib import Path
 
 from app.db.connection import create_connection
 from app.db.schema import create_schema
-from app.models import ArticleCreate, SourceCreate
+from app.models import ArticleCreate, ChunkSearchResult, SourceCreate
 from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
-from app.services import ChunkingService, RAGService
+from app.services import BaseLLMClient, ChunkingService, RAGService
+
+
+class MockLLMClient(BaseLLMClient):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[ChunkSearchResult]]] = []
+
+    def generate_answer(self, query: str, chunks: list[ChunkSearchResult]) -> str:
+        self.calls.append((query, chunks))
+        return f"Сводка по запросу: {query}. Использовано чанков: {len(chunks)}."
 
 
 class RetrievalTests(unittest.TestCase):
@@ -23,7 +32,8 @@ class RetrievalTests(unittest.TestCase):
         self.article_repo = ArticleRepository(self.connection)
         self.chunk_repo = ArticleChunkRepository(self.connection)
         self.chunking_service = ChunkingService()
-        self.rag_service = RAGService(self.chunk_repo, self.article_repo)
+        self.mock_llm = MockLLMClient()
+        self.rag_service = RAGService(self.chunk_repo, self.article_repo, llm_client=self.mock_llm)
 
     def tearDown(self) -> None:
         self.connection.close()
@@ -89,6 +99,51 @@ class RetrievalTests(unittest.TestCase):
         self.assertGreaterEqual(len(result.chunks), 1)
         self.assertEqual(result.articles[0].id, matching_article.id)
         self.assertIn("инфляция", result.chunks[0].chunk_text.lower())
+
+    def test_rag_answer_returns_summary_and_source_articles(self) -> None:
+        article_one = self._create_article(
+            title="Статья 1",
+            body_text="инфляция ускорилась в апреле. Экономисты обсуждают рост цен и реакцию рынка.",
+            published_at="2026-04-20T10:00:00",
+        )
+        article_two = self._create_article(
+            title="Статья 2",
+            body_text="Банк России сообщил, что инфляция остается ключевым фактором денежно-кредитной политики.",
+            published_at="2026-04-21T10:00:00",
+        )
+
+        result = self.rag_service.answer(
+            query="инфляция",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+            include_debug_chunks=True,
+        )
+
+        self.assertIn("Сводка по запросу: инфляция", result.summary_text)
+        self.assertGreaterEqual(len(result.source_articles), 2)
+        self.assertEqual({article.id for article in result.source_articles[:2]}, {article_one.id, article_two.id})
+        self.assertIsNotNone(result.top_chunks)
+
+    def test_rag_answer_passes_retrieval_results_to_llm(self) -> None:
+        self._create_article(
+            title="Статья 1",
+            body_text="Инфляция ускорилась в апреле и остается важной темой для аналитиков.",
+            published_at="2026-04-20T10:00:00",
+        )
+
+        self.rag_service.answer(
+            query="Инфляция",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=3,
+        )
+
+        self.assertEqual(len(self.mock_llm.calls), 1)
+        query, chunks = self.mock_llm.calls[0]
+        self.assertEqual(query, "Инфляция")
+        self.assertGreaterEqual(len(chunks), 1)
+        self.assertTrue(all(isinstance(chunk, ChunkSearchResult) for chunk in chunks))
 
 
 if __name__ == "__main__":

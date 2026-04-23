@@ -8,7 +8,7 @@ from app.models.entities import (
     Source,
     SourceCreate,
 )
-from app.models.rag import ArticleChunk, ArticleChunkCreate, ChunkSearchResult
+from app.models.rag import ArticleChunk, ArticleChunkCreate, ChunkSearchResult, RAGAnswerResult
 
 __all__ = [
     "Article",
@@ -18,6 +18,7 @@ __all__ = [
     "Claim",
     "ClaimCreate",
     "ChunkSearchResult",
+    "RAGAnswerResult",
     "NarrativeRun",
     "NarrativeRunCreate",
     "Source",
