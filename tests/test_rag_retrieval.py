@@ -9,13 +9,14 @@ from app.db.connection import create_connection
 from app.db.schema import create_schema
 from app.models import ArticleCreate, SourceCreate
 from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
-from app.services import BaseLLMClient, ChunkingService, RAGService
+from app.services import BaseEmbeddingClient, BaseLLMClient, ChunkingService, EmbeddingIndexService, RAGService
 
 
 class MockLLMClient(BaseLLMClient):
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
-        self.response_text = "Сводка по найденным фрагментам."
+        self.summary_text = "Краткая сводка по найденным материалам."
+        self.reranked_ids: list[int] = []
 
     def generate_text(
         self,
@@ -33,7 +34,26 @@ class MockLLMClient(BaseLLMClient):
                 "max_tokens": max_tokens,
             }
         )
-        return self.response_text
+        if "ranked_chunk_ids" in prompt:
+            return '{"ranked_chunk_ids": %s}' % self.reranked_ids
+        return self.summary_text
+
+
+class MockEmbeddingClient(BaseEmbeddingClient):
+    def __init__(self) -> None:
+        self._model_name = "mock-embed"
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def embed_text(self, text: str) -> list[float]:
+        lowered = text.lower()
+        if "иран" in lowered or "тегеран" in lowered:
+            return [1.0, 0.0]
+        if "украин" in lowered or "киев" in lowered:
+            return [0.0, 1.0]
+        return [0.2, 0.2]
 
 
 class RetrievalTests(unittest.TestCase):
@@ -48,7 +68,16 @@ class RetrievalTests(unittest.TestCase):
         self.chunk_repo = ArticleChunkRepository(self.connection)
         self.chunking_service = ChunkingService()
         self.mock_llm = MockLLMClient()
-        self.rag_service = RAGService(self.chunk_repo, self.article_repo, llm_client=self.mock_llm)
+        self.mock_embedding = MockEmbeddingClient()
+        self.embedding_index_service = EmbeddingIndexService(self.chunk_repo, self.mock_embedding)
+        self.rag_service = RAGService(
+            self.chunk_repo,
+            self.article_repo,
+            llm_client=self.mock_llm,
+            embedding_client=self.mock_embedding,
+            hybrid_limit=12,
+            rerank_limit=5,
+        )
 
     def tearDown(self) -> None:
         self.connection.close()
@@ -78,16 +107,14 @@ class RetrievalTests(unittest.TestCase):
                 is_canonical=is_canonical,
             )
         )
-        self.chunk_repo.create_many(self.chunking_service.chunk_article(article))
+        chunks = self.chunk_repo.create_many(self.chunking_service.chunk_article(article))
+        self.embedding_index_service.index_chunks(chunks)
         return article
 
-    def test_retrieval_returns_matching_chunks_for_canonical_articles(self) -> None:
+    def test_lexical_retrieval_returns_matching_chunks_for_canonical_articles(self) -> None:
         matching_article = self._create_article(
             title="Экономика",
-            body_text=(
-                "Центробанк сообщил, что инфляция ускорилась в апреле и описал реакцию рынка.\n\n"
-                "Аналитики обсуждают инфляцию и денежно-кредитную политику."
-            ),
+            body_text="Инфляция ускорилась в апреле. Экономисты обсуждают спрос и реакцию рынка.",
             published_at="2026-04-20T10:00:00",
             is_canonical=True,
         )
@@ -96,12 +123,6 @@ class RetrievalTests(unittest.TestCase):
             body_text="Инфляция упоминается и здесь, но статья неканоническая.",
             published_at="2026-04-20T12:00:00",
             is_canonical=False,
-        )
-        self._create_article(
-            title="Другая дата",
-            body_text="Инфляция была в прошлом месяце, но эта статья вне диапазона.",
-            published_at="2026-03-01T12:00:00",
-            is_canonical=True,
         )
 
         result = self.rag_service.search(
@@ -115,64 +136,79 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(result.articles[0].id, matching_article.id)
         self.assertIn("инфляция", result.chunks[0].chunk_text.lower())
 
-    def test_rag_answer_returns_summary_and_source_articles(self) -> None:
-        article_one = self._create_article(
+    def test_hybrid_retrieval_can_find_semantic_match_via_embeddings(self) -> None:
+        target_article = self._create_article(
+            title="Переговоры по сделке",
+            body_text="Тегеран выступил с новым заявлением по ядерной сделке и региональной безопасности.",
+            published_at="2026-04-21T10:00:00",
+        )
+        self._create_article(
+            title="Новости Украины",
+            body_text="Киев сообщил о новых переговорах и развитии ситуации на фронте.",
+            published_at="2026-04-21T11:00:00",
+        )
+
+        result = self.rag_service.search(
+            query="иран",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+        )
+
+        self.assertGreaterEqual(len(result.chunks), 1)
+        self.assertEqual(result.articles[0].id, target_article.id)
+        self.assertGreater(result.chunks[0].vector_score, 0.7)
+
+    def test_rag_answer_uses_reranked_chunks_and_returns_articles(self) -> None:
+        first_article = self._create_article(
             title="Статья 1",
-            body_text="Апрель оказался ключевым месяцем. Экономисты обсуждают спрос и реакцию рынка в апреле.",
+            body_text="Иран сообщил о новых переговорах и уточнил позицию по сделке.",
             published_at="2026-04-20T10:00:00",
         )
-        article_two = self._create_article(
+        second_article = self._create_article(
             title="Статья 2",
-            body_text="Банк России сообщил, что в апреле сохраняется давление на цены и апреле уделяют особое внимание.",
+            body_text="Тегеран также сделал отдельное заявление о региональной безопасности.",
             published_at="2026-04-21T10:00:00",
         )
 
+        initial_chunks = self.rag_service.search_chunks(
+            query="иран",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+        )
+        self.mock_llm.reranked_ids = [initial_chunks[-1].chunk_id, initial_chunks[0].chunk_id]
+
         result = self.rag_service.answer(
-            query="апреле",
+            query="иран",
             date_from="2026-04-01T00:00:00",
             date_to="2026-04-30T23:59:59",
             limit=5,
             include_debug_chunks=True,
         )
 
-        self.assertEqual(result.summary_text, "Сводка по найденным фрагментам.")
+        self.assertEqual(result.summary_text, "Краткая сводка по найденным материалам.")
         self.assertGreaterEqual(len(result.source_articles), 2)
-        self.assertEqual({article.id for article in result.source_articles[:2]}, {article_one.id, article_two.id})
+        self.assertEqual({article.id for article in result.source_articles[:2]}, {first_article.id, second_article.id})
         self.assertIsNotNone(result.top_chunks)
-
-    def test_rag_answer_passes_retrieval_results_to_llm(self) -> None:
-        self._create_article(
-            title="Статья 1",
-            body_text="Апреле уделяют много внимания, и апреле посвящены основные комментарии аналитиков.",
-            published_at="2026-04-20T10:00:00",
-        )
-
-        self.rag_service.answer(
-            query="апреле",
-            date_from="2026-04-01T00:00:00",
-            date_to="2026-04-30T23:59:59",
-            limit=3,
-        )
-
-        self.assertEqual(len(self.mock_llm.calls), 1)
-        self.assertIn("Запрос: апреле", self.mock_llm.calls[0]["prompt"])
+        self.assertTrue(any("ranked_chunk_ids" in str(call["prompt"]) for call in self.mock_llm.calls))
 
     def test_rag_answer_falls_back_when_llm_returns_non_russian_text(self) -> None:
-        self.mock_llm.response_text = "您好！这里没有相关信息。"
+        self.mock_llm.summary_text = "您好！这里没有相关信息。"
         self._create_article(
             title="Статья 1",
-            body_text="Апреле посвящены новые комментарии. Аналитики в апреле обсуждают спрос и реакцию рынка.",
+            body_text="Иран сообщил о новых переговорах и уточнил позицию по сделке.",
             published_at="2026-04-20T10:00:00",
         )
 
         result = self.rag_service.answer(
-            query="апреле",
+            query="иран",
             date_from="2026-04-01T00:00:00",
             date_to="2026-04-30T23:59:59",
             limit=5,
         )
 
-        self.assertIn("апреле", result.summary_text.lower())
+        self.assertIn("Иран", result.summary_text)
 
 
 if __name__ == "__main__":

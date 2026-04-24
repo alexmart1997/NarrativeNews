@@ -11,6 +11,7 @@ from app.ingestion.fetcher import HttpFetcher
 from app.ingestion.pipeline import IngestionPipeline
 from app.ingestion.sources import SOURCE_CONFIGS, get_source_config
 from app.repositories import ArticleChunkRepository, ArticleRepository, ClaimRepository, SourceRepository
+from app.services import EmbeddingIndexService, create_embedding_client
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,6 +39,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip claim extraction during ingestion.",
     )
+    ingest_parser.add_argument(
+        "--skip-embeddings",
+        action="store_true",
+        help="Skip embedding generation for new chunks during ingestion.",
+    )
+
+    embedding_parser = subparsers.add_parser(
+        "index-embeddings",
+        help="Generate embeddings for chunks that do not have them yet.",
+    )
+    embedding_parser.add_argument("--db-path", type=Path, default=None)
+    embedding_parser.add_argument("--limit", type=int, default=200)
 
     return parser
 
@@ -55,17 +68,34 @@ def main() -> int:
     if args.command == "ingest-source":
         initialize_database(settings.database_path)
         with create_connection(settings.database_path) as connection:
+            chunk_repository = ArticleChunkRepository(connection)
+            embedding_index_service = EmbeddingIndexService(
+                article_chunk_repository=chunk_repository,
+                embedding_client=create_embedding_client(settings),
+            )
             pipeline = IngestionPipeline(
                 fetcher=HttpFetcher(),
                 source_repository=SourceRepository(connection),
                 article_repository=ArticleRepository(connection),
-                article_chunk_repository=ArticleChunkRepository(connection),
+                article_chunk_repository=chunk_repository,
                 claim_repository=ClaimRepository(connection),
+                embedding_index_service=embedding_index_service,
                 enable_chunking=not args.skip_chunks,
                 enable_claim_extraction=not args.skip_claims,
+                enable_embeddings=not args.skip_embeddings,
             )
             result = pipeline.run_once(get_source_config(args.source_name), limit=args.limit)
         print(result)
+        return 0
+    if args.command == "index-embeddings":
+        initialize_database(settings.database_path)
+        with create_connection(settings.database_path) as connection:
+            service = EmbeddingIndexService(
+                article_chunk_repository=ArticleChunkRepository(connection),
+                embedding_client=create_embedding_client(settings),
+            )
+            indexed = service.index_missing_embeddings(limit=args.limit)
+        print(f"Indexed embeddings for {indexed} chunks.")
         return 0
 
     parser.error(f"Unsupported command: {args.command}")

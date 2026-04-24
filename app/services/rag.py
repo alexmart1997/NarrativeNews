@@ -382,6 +382,8 @@ class RAGService:
         for chunk in chunks[:3]:
             if self._token_overlap_score(query_tokens, chunk.article_title, chunk.chunk_text) > 0:
                 return True
+            if chunk.vector_score >= 0.72:
+                return True
         return False
 
     @staticmethod

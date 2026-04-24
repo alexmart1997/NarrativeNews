@@ -112,16 +112,20 @@ class LocalLlamaClient(BaseLLMClient):
                 "num_predict": self.config.max_tokens if max_tokens is None else max_tokens,
             },
         }
-        body = self._post_json("/api/generate", payload, timeout_seconds=self.config.timeout_seconds)
+        body = self._post_json(
+            f"{self.config.base_url.rstrip('/')}/api/generate",
+            payload,
+            timeout_seconds=self.config.timeout_seconds,
+        )
         text = body.get("response")
         if not isinstance(text, str) or not text.strip():
             raise LLMError("Local Llama server returned an empty response.")
         return text.strip()
 
     @staticmethod
-    def _post_json(endpoint: str, payload: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]:
+    def _post_json(url: str, payload: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]:
         request = Request(
-            url=endpoint,
+            url=url,
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
