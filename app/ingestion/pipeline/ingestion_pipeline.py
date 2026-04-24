@@ -76,9 +76,12 @@ class IngestionPipeline:
         self.enable_embeddings = enable_embeddings
 
     def run_once(self, source_config: SourceConfig, *, limit: int | None = None) -> IngestionRunResult:
+        candidate_urls = self._discover_urls(source_config, limit=limit)
+        return self.run_urls(source_config, candidate_urls)
+
+    def run_urls(self, source_config: SourceConfig, candidate_urls: list[str]) -> IngestionRunResult:
         source = self._get_or_create_source(source_config)
         parser = get_article_parser(source_config.parser_type)
-        candidate_urls = self._discover_urls(source_config, limit=limit)
 
         fetched_urls = 0
         parsed_articles = 0

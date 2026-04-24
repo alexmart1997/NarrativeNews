@@ -13,6 +13,7 @@ class SourceConfig:
     section_urls: tuple[str, ...] = field(default_factory=tuple)
     parser_type: str = ""
     article_url_patterns: tuple[str, ...] = field(default_factory=tuple)
+    archive_url_template: str | None = None
 
 
 SOURCE_CONFIGS: dict[str, SourceConfig] = {
@@ -33,6 +34,7 @@ SOURCE_CONFIGS: dict[str, SourceConfig] = {
             r"^https?://lenta\.ru/news/\d{4}/\d{2}/\d{2}/[^/]+/?$",
             r"^https?://lenta\.ru/articles/\d{4}/\d{2}/\d{2}/[^/]+/?$",
         ),
+        archive_url_template="https://lenta.ru/{year}/{month}/{day}/",
     ),
     "ria": SourceConfig(
         name="РИА Новости",
@@ -51,6 +53,7 @@ SOURCE_CONFIGS: dict[str, SourceConfig] = {
             r"^https?://ria\.ru/\d{8}/[^/]+\.html$",
             r"^https?://ria\.ru/\d{8}/[^/]+/?$",
         ),
+        archive_url_template="https://ria.ru/{ymd}/",
     ),
 }
 
