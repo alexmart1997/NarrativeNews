@@ -15,4 +15,7 @@ dev = []
 ui = ["streamlit>=1.35"]
 
 [tool.poetry]
+name = "narrative-news"
+version = "0.1.0"
 package-mode = false
+packages = [{ include = "app" }]
