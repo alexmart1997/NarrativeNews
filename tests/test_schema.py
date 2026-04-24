@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import queue
+import threading
 import unittest
 from pathlib import Path
 import shutil
@@ -48,6 +50,26 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("idx_articles_published_at", index_names)
         self.assertIn("idx_claims_article_id", index_names)
         self.assertIn("idx_claim_clusters_run_id", index_names)
+
+    def test_connection_can_be_used_from_another_thread(self) -> None:
+        results: queue.Queue[object] = queue.Queue()
+
+        def worker() -> None:
+            try:
+                row = self.connection.execute("SELECT 1 AS value").fetchone()
+                results.put(row["value"])
+            except Exception as exc:
+                results.put(exc)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        result = results.get_nowait()
+        if isinstance(result, Exception):
+            raise result
+        self.assertEqual(result, 1)
 
 
 if __name__ == "__main__":
