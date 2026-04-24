@@ -17,6 +17,7 @@ class Settings:
     log_level: str = "INFO"
     log_format: str = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
     llm_provider: str = "local_llama"
+    llm_api_key: str | None = None
     llm_host: str = "127.0.0.1"
     llm_port: int = 11434
     llm_base_url: str = "http://127.0.0.1:11434"
@@ -37,6 +38,7 @@ def _cached_settings() -> Settings:
     database_path = _resolve_database_path()
     log_level = os.getenv("NARRATIVE_NEWS_LOG_LEVEL", "INFO")
     llm_provider = os.getenv("NARRATIVE_NEWS_LLM_PROVIDER", "local_llama")
+    llm_api_key = os.getenv("NARRATIVE_NEWS_LLM_API_KEY")
     llm_host = os.getenv("NARRATIVE_NEWS_LLM_HOST", "127.0.0.1")
     llm_port = int(os.getenv("NARRATIVE_NEWS_LLM_PORT", "11434"))
     llm_base_url = os.getenv("NARRATIVE_NEWS_LLM_BASE_URL", f"http://{llm_host}:{llm_port}")
@@ -54,6 +56,7 @@ def _cached_settings() -> Settings:
         database_path=database_path,
         log_level=log_level,
         llm_provider=llm_provider,
+        llm_api_key=llm_api_key,
         llm_host=llm_host,
         llm_port=llm_port,
         llm_base_url=llm_base_url,
@@ -98,6 +101,7 @@ def get_settings(database_path: Path | None = None) -> Settings:
         log_level=base_settings.log_level,
         log_format=base_settings.log_format,
         llm_provider=base_settings.llm_provider,
+        llm_api_key=base_settings.llm_api_key,
         llm_host=base_settings.llm_host,
         llm_port=base_settings.llm_port,
         llm_base_url=base_settings.llm_base_url,

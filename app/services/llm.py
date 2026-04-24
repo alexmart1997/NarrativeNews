@@ -90,6 +90,16 @@ class LocalLlamaEmbeddingConfig:
     timeout_seconds: float
 
 
+@dataclass(frozen=True, slots=True)
+class OpenAICompatibleConfig:
+    base_url: str
+    api_key: str
+    model_name: str
+    timeout_seconds: float
+    temperature: float
+    max_tokens: int
+
+
 class LocalLlamaClient(BaseLLMClient):
     def __init__(self, config: LocalLlamaConfig) -> None:
         self.config = config
@@ -149,6 +159,89 @@ class LocalLlamaClient(BaseLLMClient):
             raise LLMError("Local Llama server returned invalid JSON.") from exc
         if not isinstance(parsed, dict):
             raise LLMError("Local Llama server returned an invalid payload.")
+        return parsed
+
+
+class OpenAICompatibleClient(BaseLLMClient):
+    def __init__(self, config: OpenAICompatibleConfig) -> None:
+        self.config = config
+
+    def generate_text(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> str:
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        payload = {
+            "model": self.config.model_name,
+            "messages": messages,
+            "temperature": self.config.temperature if temperature is None else temperature,
+            "max_tokens": self.config.max_tokens if max_tokens is None else max_tokens,
+        }
+        body = self._post_json(
+            f"{self.config.base_url.rstrip('/')}/chat/completions",
+            payload,
+            timeout_seconds=self.config.timeout_seconds,
+            api_key=self.config.api_key,
+        )
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise LLMError("OpenAI-compatible server returned no choices.")
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise LLMError("OpenAI-compatible server returned an invalid choice payload.")
+        message = first_choice.get("message")
+        if not isinstance(message, dict):
+            raise LLMError("OpenAI-compatible server returned an invalid message payload.")
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise LLMError("OpenAI-compatible server returned an empty response.")
+        return content.strip()
+
+    @staticmethod
+    def _post_json(
+        url: str,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float,
+        api_key: str,
+    ) -> dict[str, Any]:
+        request = Request(
+            url=url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                response_body = response.read().decode("utf-8")
+        except HTTPError as exc:
+            error_body = ""
+            try:
+                error_body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                error_body = ""
+            raise LLMError(
+                f"OpenAI-compatible server returned HTTP {exc.code}: {error_body or exc.reason}"
+            ) from exc
+        except (URLError, TimeoutError) as exc:
+            raise LLMError("OpenAI-compatible server is unavailable.") from exc
+
+        try:
+            parsed = json.loads(response_body)
+        except json.JSONDecodeError as exc:
+            raise LLMError("OpenAI-compatible server returned invalid JSON.") from exc
+        if not isinstance(parsed, dict):
+            raise LLMError("OpenAI-compatible server returned an invalid payload.")
         return parsed
 
 
@@ -213,17 +306,28 @@ class SimpleExtractiveLLMClient(BaseLLMClient):
 
 
 def create_llm_client(settings: Settings) -> BaseLLMClient | None:
-    if settings.llm_provider != "local_llama":
-        return None
-    return LocalLlamaClient(
-        LocalLlamaConfig(
-            base_url=settings.llm_base_url,
-            model_name=settings.llm_model_name,
-            timeout_seconds=settings.llm_timeout_seconds,
-            temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
+    if settings.llm_provider == "local_llama":
+        return LocalLlamaClient(
+            LocalLlamaConfig(
+                base_url=settings.llm_base_url,
+                model_name=settings.llm_model_name,
+                timeout_seconds=settings.llm_timeout_seconds,
+                temperature=settings.llm_temperature,
+                max_tokens=settings.llm_max_tokens,
+            )
         )
-    )
+    if settings.llm_provider in {"openai_compatible", "groq"} and settings.llm_api_key:
+        return OpenAICompatibleClient(
+            OpenAICompatibleConfig(
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key,
+                model_name=settings.llm_model_name,
+                timeout_seconds=settings.llm_timeout_seconds,
+                temperature=settings.llm_temperature,
+                max_tokens=settings.llm_max_tokens,
+            )
+        )
+    return None
 
 
 def create_embedding_client(settings: Settings) -> BaseEmbeddingClient | None:
