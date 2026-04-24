@@ -104,8 +104,11 @@ class ArchiveDiscoveryService:
             return False
         if source_config.domain not in parsed.netloc:
             return False
+        if parsed.query or parsed.fragment:
+            return False
         if not parsed.path or parsed.path == "/":
             return False
+        normalized_url = parsed._replace(query="", fragment="").geturl()
         if source_config.article_url_patterns:
-            return any(re.match(pattern, url) for pattern in source_config.article_url_patterns)
+            return any(re.match(pattern, normalized_url) for pattern in source_config.article_url_patterns)
         return True

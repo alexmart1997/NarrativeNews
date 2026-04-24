@@ -62,6 +62,7 @@ class ArchiveDiscoveryTests(unittest.TestCase):
         <html>
           <body>
             <a href="https://ria.ru/20260423/iran-2088648192.html">Iran</a>
+            <a href="https://ria.ru/20260423/#logo-realty_logo_m">Anchor</a>
             <a href="https://ria.ru/world/">World</a>
           </body>
         </html>
