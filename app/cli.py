@@ -13,7 +13,14 @@ from app.ingestion.fetcher import HttpFetcher
 from app.ingestion.pipeline import BulkIngestionService, IngestionPipeline
 from app.ingestion.sources import SOURCE_CONFIGS, get_source_config
 from app.repositories import ArticleChunkRepository, ArticleRepository, ClaimRepository, SourceRepository
-from app.services import ClaimBatchService, ClaimExtractor, EmbeddingIndexService, create_embedding_client, create_llm_client
+from app.services import (
+    ClaimBatchService,
+    ClaimExtractor,
+    DeploySnapshotService,
+    EmbeddingIndexService,
+    create_embedding_client,
+    create_llm_client,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,6 +93,25 @@ def build_parser() -> argparse.ArgumentParser:
     claims_parser.add_argument("--date-from", type=str, default=None)
     claims_parser.add_argument("--date-to", type=str, default=None)
     claims_parser.add_argument("--limit", type=int, default=100)
+
+    deploy_parser = subparsers.add_parser(
+        "create-deploy-db",
+        help="Create a reduced deploy snapshot database for a selected date range.",
+    )
+    deploy_parser.add_argument("--db-path", type=Path, default=None)
+    deploy_parser.add_argument("--output-path", type=Path, required=True)
+    deploy_parser.add_argument("--date-from", type=str, required=True)
+    deploy_parser.add_argument("--date-to", type=str, required=True)
+    deploy_parser.add_argument(
+        "--drop-embeddings",
+        action="store_true",
+        help="Drop chunk embeddings from the deploy snapshot.",
+    )
+    deploy_parser.add_argument(
+        "--clear-narratives",
+        action="store_true",
+        help="Remove saved narrative runs and results from the deploy snapshot.",
+    )
 
     return parser
 
@@ -181,6 +207,19 @@ def main() -> int:
                 date_to=args.date_to,
                 limit=args.limit,
             )
+        print(result)
+        return 0
+    if args.command == "create-deploy-db":
+        initialize_database(settings.database_path)
+        service = DeploySnapshotService()
+        result = service.create_snapshot(
+            source_database_path=settings.database_path,
+            output_database_path=args.output_path,
+            date_from=args.date_from,
+            date_to=args.date_to,
+            keep_embeddings=not args.drop_embeddings,
+            clear_narratives=args.clear_narratives,
+        )
         print(result)
         return 0
 

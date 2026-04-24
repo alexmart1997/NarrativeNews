@@ -2,6 +2,7 @@ from app.services.claim_batch import ClaimBatchResult, ClaimBatchService
 from app.services.claim_extraction import ClaimExtractor, SimpleHeuristicClaimLLMClient
 from app.services.chunking import ChunkingConfig, ChunkingService
 from app.services.deduplication import DeduplicationResult, DeduplicationService
+from app.services.deploy_snapshot import DeploySnapshotResult, DeploySnapshotService
 from app.services.embeddings import EmbeddingIndexService
 from app.services.llm import (
     BaseEmbeddingClient,
@@ -34,6 +35,8 @@ __all__ = [
     "ChunkingService",
     "DeduplicationResult",
     "DeduplicationService",
+    "DeploySnapshotResult",
+    "DeploySnapshotService",
     "EmbeddingError",
     "EmbeddingIndexService",
     "LLMError",
