@@ -73,6 +73,8 @@ class MockClaimEmbeddingClient(BaseEmbeddingClient):
         lowered = text.lower()
         if "инфляц" in lowered or "цен" in lowered:
             return [1.0, 0.0]
+        if "росси" in lowered:
+            return [0.7, 0.0]
         if "спрос" in lowered or "причин" in lowered:
             return [0.0, 1.0]
         return [0.3, 0.3]
@@ -251,7 +253,6 @@ class NarrativeRunTests(unittest.TestCase):
         self.assertEqual({item.narrative_type for item in saved_results}, {"predictive", "causal", "meta"})
         predictive = next(item for item in saved_results if item.narrative_type == "predictive")
         self.assertEqual(predictive.title, "predictive label")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -411,6 +411,7 @@ class NarrativeRunService:
             return claims
 
         topic_embedding = self._embed_topic(topic_text)
+        anchor_term = topic_terms[0]
         filtered: list[Claim] = []
         for claim in claims:
             claim_text = " ".join(
@@ -428,8 +429,17 @@ class NarrativeRunService:
                 )
                 if value
             )
-            lexical_score = self._topic_overlap_score(topic_terms, f"{claim_text} {article_text}")
-            if lexical_score > 0:
+            claim_overlap = self._topic_overlap_score(topic_terms, claim_text)
+            article_overlap = self._topic_overlap_score(topic_terms, article_text)
+            claim_anchor_overlap = self._topic_overlap_score([anchor_term], claim_text)
+            article_anchor_overlap = self._topic_overlap_score([anchor_term], article_text)
+            if self._claim_matches_topic(
+                topic_terms=topic_terms,
+                claim_anchor_overlap=claim_anchor_overlap,
+                article_anchor_overlap=article_anchor_overlap,
+                claim_overlap=claim_overlap,
+                article_overlap=article_overlap,
+            ):
                 filtered.append(claim)
                 continue
 
@@ -438,7 +448,11 @@ class NarrativeRunService:
                     claim_embedding = self.embedding_client.embed_text(claim_text)
                 except Exception:
                     claim_embedding = []
-                if claim_embedding and self._cosine_similarity(topic_embedding, claim_embedding) >= 0.83:
+                if (
+                    claim_embedding
+                    and (claim_anchor_overlap > 0 or article_anchor_overlap > 0)
+                    and self._cosine_similarity(topic_embedding, claim_embedding) >= 0.88
+                ):
                     filtered.append(claim)
         return filtered
 
@@ -477,7 +491,15 @@ class NarrativeRunService:
         persisted_clusters: list[tuple[int, GroupedClaimCluster]],
     ) -> list[object]:
         top_per_type: dict[str, tuple[int, GroupedClaimCluster]] = {}
+        topic_terms = self._extract_topic_terms(self.narrative_run_repository.get_by_id(run_id).topic_text) if self.narrative_run_repository.get_by_id(run_id) else []
+        topic_embedding = self._embed_topic(self.narrative_run_repository.get_by_id(run_id).topic_text) if self.narrative_run_repository.get_by_id(run_id) else None
         for cluster_id, cluster in persisted_clusters:
+            if topic_terms and not self._cluster_matches_topic(
+                topic_terms=topic_terms,
+                topic_embedding=topic_embedding,
+                cluster=cluster,
+            ):
+                continue
             current = top_per_type.get(cluster.claim_type)
             if current is None or cluster.cluster_score > current[1].cluster_score:
                 top_per_type[cluster.claim_type] = (cluster_id, cluster)
@@ -555,6 +577,72 @@ class NarrativeRunService:
             return 0.0
         matches = sum(1 for term in topic_terms if term in haystack)
         return matches / len(topic_terms)
+
+    @staticmethod
+    def _claim_matches_topic(
+        *,
+        topic_terms: list[str],
+        claim_anchor_overlap: float,
+        article_anchor_overlap: float,
+        claim_overlap: float,
+        article_overlap: float,
+    ) -> bool:
+        if not topic_terms:
+            return True
+        if len(topic_terms) == 1:
+            return claim_overlap >= 1.0 or article_overlap >= 1.0
+        if claim_anchor_overlap >= 1.0:
+            return True
+        if claim_overlap >= 0.5 and claim_anchor_overlap > 0:
+            return True
+        if claim_anchor_overlap > 0 and article_overlap >= 0.5:
+            return True
+        if article_anchor_overlap > 0 and claim_overlap >= 0.25:
+            return True
+        if article_anchor_overlap > 0 and article_overlap >= 0.67:
+            return True
+        return False
+
+    def _cluster_matches_topic(
+        self,
+        *,
+        topic_terms: list[str],
+        topic_embedding: list[float] | None,
+        cluster: GroupedClaimCluster,
+    ) -> bool:
+        representative_text = " ".join(
+            [
+                cluster.representative_text,
+                cluster.cluster_summary,
+                " ".join((claim.normalized_claim_text or claim.claim_text) for claim in cluster.representative_claims[:3]),
+            ]
+        )
+        article_text = " ".join(
+            value
+            for article in cluster.articles[:3]
+            for value in (article.title, article.subtitle, article.category)
+            if value
+        )
+        anchor_term = topic_terms[0]
+        claim_overlap = self._topic_overlap_score(topic_terms, representative_text)
+        article_overlap = self._topic_overlap_score(topic_terms, article_text)
+        claim_anchor_overlap = self._topic_overlap_score([anchor_term], representative_text)
+        article_anchor_overlap = self._topic_overlap_score([anchor_term], article_text)
+        if self._claim_matches_topic(
+            topic_terms=topic_terms,
+            claim_anchor_overlap=claim_anchor_overlap,
+            article_anchor_overlap=article_anchor_overlap,
+            claim_overlap=claim_overlap,
+            article_overlap=article_overlap,
+        ):
+            return True
+        if topic_embedding is None or self.embedding_client is None:
+            return False
+        try:
+            cluster_embedding = self.embedding_client.embed_text(representative_text)
+        except Exception:
+            return False
+        return bool(cluster_embedding) and (claim_anchor_overlap > 0 or article_anchor_overlap > 0) and self._cosine_similarity(topic_embedding, cluster_embedding) >= 0.86
 
     def _embed_topic(self, topic_text: str) -> list[float] | None:
         if self.embedding_client is None:
