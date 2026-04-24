@@ -55,7 +55,6 @@ def render_rag_tab(services) -> None:
         if result.source_articles:
             for article in result.source_articles:
                 st.markdown(f"- [{article.title}]({article.url})")
-                st.caption(f"{article.published_at} | article_id={article.id}")
         else:
             st.info("No source articles found.")
 
@@ -63,9 +62,6 @@ def render_rag_tab(services) -> None:
             if result.top_chunks:
                 for chunk in result.top_chunks:
                     st.markdown(f"**{chunk.article_title}**")
-                    st.caption(
-                        f"article_id={chunk.article_id} | chunk_index={chunk.chunk_index} | published_at={chunk.published_at}"
-                    )
                     st.write(chunk.chunk_text)
             else:
                 st.info("No chunks found.")
@@ -118,7 +114,6 @@ def render_narratives_tab(services) -> None:
                 st.markdown("Supporting Articles")
                 for article in articles[:5]:
                     st.markdown(f"- [{article.title}]({article.url})")
-                    st.caption(f"{article.published_at} | article_id={article.id}")
             else:
                 st.info("No supporting articles saved.")
 

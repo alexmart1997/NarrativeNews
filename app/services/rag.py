@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from app.models import Article, ChunkSearchResult, RAGAnswerResult
 from app.repositories import ArticleChunkRepository, ArticleRepository
-from app.services.llm import BaseLLMClient, LLMError
+from app.services.llm import BaseLLMClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +15,8 @@ class RAGSearchResult:
 
 
 class RAGService:
+    NON_CYRILLIC_HEAVY_RE = re.compile(r"[\u4e00-\u9fff]")
+
     def __init__(
         self,
         article_chunk_repository: ArticleChunkRepository,
@@ -63,14 +66,16 @@ class RAGService:
 
     def _generate_summary(self, query: str, chunks: list[ChunkSearchResult]) -> str:
         if not chunks:
-            return "По выбранному периоду релевантные фрагменты не найдены."
+            return "По выбранному запросу релевантные фрагменты не найдены."
         if self.llm_client is None:
             return self._fallback_summary(chunks)
 
         prompt = self._build_prompt(query, chunks)
         system_prompt = (
-            "Ты помогаешь с news RAG. Отвечай кратко, по-русски, только на основе переданных фрагментов. "
-            "Не придумывай факты и не пересказывай каждую статью отдельно."
+            "Ты помогаешь с новостным RAG. Отвечай только на русском языке. "
+            "Используй только факты из переданных фрагментов. "
+            "Не придумывай детали, не добавляй факты вне контекста и не перечисляй статьи по одной. "
+            "Если по запросу в контексте мало данных, честно скажи об этом кратко."
         )
         try:
             text = self.llm_client.generate_text(
@@ -82,25 +87,35 @@ class RAGService:
         except Exception:
             return self._fallback_summary(chunks)
 
-        return text.strip() or self._fallback_summary(chunks)
+        cleaned = text.strip()
+        if not cleaned or self._looks_off_language(cleaned):
+            return self._fallback_summary(chunks)
+        return cleaned
 
     @staticmethod
     def _build_prompt(query: str, chunks: list[ChunkSearchResult]) -> str:
-        lines = [f"Запрос: {query}", "", "Фрагменты контекста:"]
+        lines = [
+            f"Запрос: {query}",
+            "",
+            "Фрагменты контекста:",
+        ]
         for index, chunk in enumerate(chunks[:5], start=1):
             lines.append(f"{index}. [{chunk.article_title}] {chunk.chunk_text}")
         lines.append("")
-        lines.append("Сделай краткую выжимку в 1-2 абзаца только по этому контексту.")
+        lines.append("Сформулируй короткую выжимку на 1-2 абзаца только по этим фрагментам.")
         return "\n".join(lines)
 
-    @staticmethod
-    def _fallback_summary(chunks: list[ChunkSearchResult]) -> str:
+    def _fallback_summary(self, chunks: list[ChunkSearchResult]) -> str:
         paragraphs: list[str] = []
         for chunk in chunks[:2]:
             text = chunk.chunk_text.strip()
             if text:
                 paragraphs.append(text)
-        return "\n\n".join(paragraphs) if paragraphs else "По выбранному периоду релевантные фрагменты не найдены."
+        return "\n\n".join(paragraphs) if paragraphs else "По выбранному запросу релевантные фрагменты не найдены."
+
+    @classmethod
+    def _looks_off_language(cls, text: str) -> bool:
+        return bool(cls.NON_CYRILLIC_HEAVY_RE.search(text))
 
     def _select_source_articles(
         self,

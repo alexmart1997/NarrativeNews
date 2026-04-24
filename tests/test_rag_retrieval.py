@@ -15,6 +15,7 @@ from app.services import BaseLLMClient, ChunkingService, RAGService
 class MockLLMClient(BaseLLMClient):
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.response_text = "Сводка по найденным фрагментам."
 
     def generate_text(
         self,
@@ -32,7 +33,7 @@ class MockLLMClient(BaseLLMClient):
                 "max_tokens": max_tokens,
             }
         )
-        return "Сводка по найденным фрагментам."
+        return self.response_text
 
 
 class RetrievalTests(unittest.TestCase):
@@ -98,7 +99,7 @@ class RetrievalTests(unittest.TestCase):
         )
         self._create_article(
             title="Другая дата",
-            body_text="Инфляция была в прошлом месяце, но дата статьи вне диапазона.",
+            body_text="Инфляция была в прошлом месяце, но эта статья вне диапазона.",
             published_at="2026-03-01T12:00:00",
             is_canonical=True,
         )
@@ -117,17 +118,17 @@ class RetrievalTests(unittest.TestCase):
     def test_rag_answer_returns_summary_and_source_articles(self) -> None:
         article_one = self._create_article(
             title="Статья 1",
-            body_text="инфляция ускорилась в апреле. Экономисты обсуждают рост цен и реакцию рынка.",
+            body_text="Апрель оказался ключевым месяцем. Экономисты обсуждают спрос и реакцию рынка в апреле.",
             published_at="2026-04-20T10:00:00",
         )
         article_two = self._create_article(
             title="Статья 2",
-            body_text="Банк России сообщил, что инфляция остается ключевым фактором денежно-кредитной политики.",
+            body_text="Банк России сообщил, что в апреле сохраняется давление на цены и апреле уделяют особое внимание.",
             published_at="2026-04-21T10:00:00",
         )
 
         result = self.rag_service.answer(
-            query="инфляция",
+            query="апреле",
             date_from="2026-04-01T00:00:00",
             date_to="2026-04-30T23:59:59",
             limit=5,
@@ -142,19 +143,36 @@ class RetrievalTests(unittest.TestCase):
     def test_rag_answer_passes_retrieval_results_to_llm(self) -> None:
         self._create_article(
             title="Статья 1",
-            body_text="Инфляция ускорилась в апреле и остается важной темой для аналитиков.",
+            body_text="Апреле уделяют много внимания, и апреле посвящены основные комментарии аналитиков.",
             published_at="2026-04-20T10:00:00",
         )
 
         self.rag_service.answer(
-            query="Инфляция",
+            query="апреле",
             date_from="2026-04-01T00:00:00",
             date_to="2026-04-30T23:59:59",
             limit=3,
         )
 
         self.assertEqual(len(self.mock_llm.calls), 1)
-        self.assertIn("Запрос: Инфляция", self.mock_llm.calls[0]["prompt"])
+        self.assertIn("Запрос: апреле", self.mock_llm.calls[0]["prompt"])
+
+    def test_rag_answer_falls_back_when_llm_returns_non_russian_text(self) -> None:
+        self.mock_llm.response_text = "您好！这里没有相关信息。"
+        self._create_article(
+            title="Статья 1",
+            body_text="Апреле посвящены новые комментарии. Аналитики в апреле обсуждают спрос и реакцию рынка.",
+            published_at="2026-04-20T10:00:00",
+        )
+
+        result = self.rag_service.answer(
+            query="апреле",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+        )
+
+        self.assertIn("апреле", result.summary_text.lower())
 
 
 if __name__ == "__main__":
