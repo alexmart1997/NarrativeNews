@@ -58,6 +58,8 @@ class NarrativeResultArticleCreate:
 class GroupedClaimCluster:
     claim_type: str
     representative_text: str
+    cluster_summary: str
     claims: list[Claim]
+    representative_claims: list[Claim]
     articles: list[Article]
     cluster_score: float

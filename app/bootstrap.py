@@ -75,9 +75,10 @@ def build_app_services(connection: Connection, settings: Settings) -> AppService
         narrative_run_repository=narrative_run_repository,
         claim_cluster_repository=claim_cluster_repository,
         narrative_result_repository=narrative_result_repository,
-        claim_grouper=ClaimGrouper(),
+        claim_grouper=ClaimGrouper(embedding_client=embedding_client),
         narrative_scorer=NarrativeScorer(),
         narrative_labeling_service=NarrativeLabelingService(llm_client=llm_client),
+        embedding_client=embedding_client,
     )
 
     return AppServices(

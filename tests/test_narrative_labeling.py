@@ -79,7 +79,9 @@ def build_cluster() -> GroupedClaimCluster:
     return GroupedClaimCluster(
         claim_type="predictive",
         representative_text="инфляция вырастет к лету",
+        cluster_summary="инфляция вырастет к лету аналитики ждут рост цен летом",
         claims=claims,
+        representative_claims=claims,
         articles=[article],
         cluster_score=0.8,
     )
@@ -89,18 +91,19 @@ class NarrativeLabelingTests(unittest.TestCase):
     def test_labeling_for_one_cluster(self) -> None:
         mock_llm = MockNarrativeLabelingLLMClient(
             {
-                "title": "Рост инфляции к лету",
-                "formulation": "Инфляция, вероятно, усилится к лету.",
-                "explanation": "Кластер объединяет несколько однотипных predictive claims.",
+                "title": "Рост инфляции летом",
+                "formulation": "Инфляция, вероятно, вырастет к лету. Аналитики ожидают рост цен.",
+                "explanation": "Кластер опирается на несколько согласованных predictive claims.",
             }
         )
         service = NarrativeLabelingService(llm_client=mock_llm)
 
         label = service.label_cluster(build_cluster())
 
-        self.assertEqual(label.title, "Рост инфляции к лету")
+        self.assertEqual(label.title, "Рост инфляции летом")
         self.assertEqual(len(mock_llm.calls), 1)
-        self.assertIn("Тип нарратива: predictive", mock_llm.calls[0]["prompt"])
+        self.assertIn("Narrative type: predictive", mock_llm.calls[0]["prompt"])
+        self.assertIn("Cluster summary:", mock_llm.calls[0]["prompt"])
 
     def test_fallback_behavior_without_llm(self) -> None:
         service = NarrativeLabelingService()

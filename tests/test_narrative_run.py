@@ -16,7 +16,14 @@ from app.repositories import (
     NarrativeRunRepository,
     SourceRepository,
 )
-from app.services import BaseLLMClient, ClaimGrouper, NarrativeLabelingService, NarrativeRunService, NarrativeScorer
+from app.services import (
+    BaseEmbeddingClient,
+    BaseLLMClient,
+    ClaimGrouper,
+    NarrativeLabelingService,
+    NarrativeRunService,
+    NarrativeScorer,
+)
 
 
 class MockNarrativeRunLabelingLLMClient(BaseLLMClient):
@@ -57,6 +64,20 @@ class MockNarrativeRunLabelingLLMClient(BaseLLMClient):
         }
 
 
+class MockClaimEmbeddingClient(BaseEmbeddingClient):
+    @property
+    def model_name(self) -> str:
+        return "mock-claims"
+
+    def embed_text(self, text: str) -> list[float]:
+        lowered = text.lower()
+        if "инфляц" in lowered or "цен" in lowered:
+            return [1.0, 0.0]
+        if "спрос" in lowered or "причин" in lowered:
+            return [0.0, 1.0]
+        return [0.3, 0.3]
+
+
 class NarrativeRunTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = Path("tests") / ".tmp" / f"narrative-{uuid.uuid4().hex}"
@@ -70,17 +91,19 @@ class NarrativeRunTests(unittest.TestCase):
         self.run_repo = NarrativeRunRepository(self.connection)
         self.cluster_repo = ClaimClusterRepository(self.connection)
         self.result_repo = NarrativeResultRepository(self.connection)
+        self.embedding_client = MockClaimEmbeddingClient()
         self.service = NarrativeRunService(
             article_repository=self.article_repo,
             claim_repository=self.claim_repo,
             narrative_run_repository=self.run_repo,
             claim_cluster_repository=self.cluster_repo,
             narrative_result_repository=self.result_repo,
-            claim_grouper=ClaimGrouper(),
+            claim_grouper=ClaimGrouper(embedding_client=self.embedding_client),
             narrative_scorer=NarrativeScorer(),
             narrative_labeling_service=NarrativeLabelingService(
                 llm_client=MockNarrativeRunLabelingLLMClient()
             ),
+            embedding_client=self.embedding_client,
         )
 
     def tearDown(self) -> None:
@@ -142,16 +165,17 @@ class NarrativeRunTests(unittest.TestCase):
             published_at="2026-04-20T10:00:00",
             claims=[
                 ("Инфляция вырастет к лету.", "инфляция вырастет к лету", "predictive"),
-                ("Инфляция вырастет к лету в стране.", "инфляция вырастет к лету", "predictive"),
+                ("Рост цен ожидается летом.", "рост цен ожидается летом", "predictive"),
             ],
         )
 
         claims = self.claim_repo.list_by_article_id(article.id)
-        grouped = ClaimGrouper().group(claims, {article.id: article})
+        grouped = ClaimGrouper(embedding_client=self.embedding_client).group(claims, {article.id: article})
 
         self.assertEqual(len(grouped), 1)
         self.assertEqual(grouped[0].claim_type, "predictive")
         self.assertEqual(len(grouped[0].claims), 2)
+        self.assertTrue(grouped[0].cluster_summary)
 
     def test_narrative_run_creates_run_and_results(self) -> None:
         self._seed_article_with_claims(
@@ -162,16 +186,16 @@ class NarrativeRunTests(unittest.TestCase):
                 ("Инфляция вырастет к лету.", "инфляция вырастет к лету", "predictive"),
                 ("Рост цен вызвал пересмотр планов компаний.", "рост цен вызвал пересмотр планов компаний", "causal"),
                 ("ЦБ сообщил об ускорении инфляции.", "цб сообщил об ускорении инфляции", "meta"),
-                ("Служебная фраза.", "служебная фраза", "other"),
+                ("Ранее сообщалось о рынке.", "ранее сообщалось о рынке", "other"),
             ],
         )
         self._seed_article_with_claims(
             title="Инфляция и ожидания",
-            body_text="Инфляция меняет ожидания.",
+            body_text="Ожидания инфляции меняются.",
             published_at="2026-04-21T10:00:00",
             claims=[
-                ("Инфляция вырастет к лету.", "инфляция вырастет к лету", "predictive"),
-                ("Рост цен вызвал пересмотр планов ретейлеров.", "рост цен вызвал пересмотр планов компаний", "causal"),
+                ("Рост цен ожидается летом.", "рост цен ожидается летом", "predictive"),
+                ("Спрос стал причиной пересмотра цен.", "спрос стал причиной пересмотра цен", "causal"),
             ],
         )
 
@@ -199,9 +223,9 @@ class NarrativeRunTests(unittest.TestCase):
             published_at="2026-04-20T10:00:00",
             claims=[
                 ("Инфляция вырастет к лету.", "инфляция вырастет к лету", "predictive"),
-                ("Инфляция вырастет к осени.", "инфляция вырастет к осени", "predictive"),
+                ("Рост цен ожидается летом.", "рост цен ожидается летом", "predictive"),
                 ("Рост цен вызвал коррекцию спроса.", "рост цен вызвал коррекцию спроса", "causal"),
-                ("Минфин сообщил о росте инфляции.", "минфин сообщил о росте инфляции", "meta"),
+                ("ЦБ сообщил об ускорении инфляции.", "цб сообщил об ускорении инфляции", "meta"),
             ],
         )
         self._seed_article_with_claims(
@@ -210,8 +234,8 @@ class NarrativeRunTests(unittest.TestCase):
             published_at="2026-04-21T10:00:00",
             claims=[
                 ("Инфляция вырастет к лету.", "инфляция вырастет к лету", "predictive"),
-                ("Рост цен вызвал коррекцию спроса.", "рост цен вызвал коррекцию спроса", "causal"),
-                ("Минфин сообщил о росте инфляции.", "минфин сообщил о росте инфляции", "meta"),
+                ("Спрос стал причиной пересмотра цен.", "спрос стал причиной пересмотра цен", "causal"),
+                ("Минфин сообщил об ускорении инфляции.", "минфин сообщил об ускорении инфляции", "meta"),
             ],
         )
 
