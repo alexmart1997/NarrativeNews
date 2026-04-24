@@ -25,14 +25,20 @@ class HttpFetcher:
     def __init__(
         self,
         *,
-        timeout_seconds: float = 10.0,
+        timeout_seconds: float = 20.0,
         max_retries: int = 2,
-        retry_delay_seconds: float = 1.0,
-        user_agent: str = "NarrativeNewsBot/0.1 (+https://example.local)",
+        retry_delay_seconds: float = 1.5,
+        retry_backoff_multiplier: float = 1.75,
+        user_agent: str = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
     ) -> None:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.retry_delay_seconds = retry_delay_seconds
+        self.retry_backoff_multiplier = retry_backoff_multiplier
         self.user_agent = user_agent
 
     def fetch(self, url: str) -> FetchResult:
@@ -50,7 +56,10 @@ class HttpFetcher:
                 )
                 if attempt > self.max_retries:
                     break
-                time.sleep(self.retry_delay_seconds)
+                delay_seconds = self.retry_delay_seconds * (
+                    self.retry_backoff_multiplier ** (attempt - 1)
+                )
+                time.sleep(delay_seconds)
         raise FetchError(f"Failed to fetch {url}") from last_error
 
     def _fetch_once(self, url: str) -> FetchResult:

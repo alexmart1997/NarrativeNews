@@ -38,6 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("source_name", choices=sorted(SOURCE_CONFIGS.keys()))
     ingest_parser.add_argument("--db-path", type=Path, default=None)
     ingest_parser.add_argument("--limit", type=int, default=10)
+    ingest_parser.add_argument("--fetch-timeout", type=float, default=20.0)
+    ingest_parser.add_argument("--fetch-retries", type=int, default=2)
+    ingest_parser.add_argument("--retry-delay", type=float, default=1.5)
     ingest_parser.add_argument(
         "--skip-chunks",
         action="store_true",
@@ -62,6 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     backfill_parser.add_argument("--date-from", type=parse_date, required=True)
     backfill_parser.add_argument("--date-to", type=parse_date, required=True)
     backfill_parser.add_argument("--per-day-limit", type=int, default=200)
+    backfill_parser.add_argument("--fetch-timeout", type=float, default=30.0)
+    backfill_parser.add_argument("--fetch-retries", type=int, default=4)
+    backfill_parser.add_argument("--retry-delay", type=float, default=2.0)
     backfill_parser.add_argument(
         "--skip-chunks",
         action="store_true",
@@ -139,7 +145,11 @@ def main() -> int:
                 embedding_client=create_embedding_client(settings),
             )
             pipeline = IngestionPipeline(
-                fetcher=HttpFetcher(),
+                fetcher=HttpFetcher(
+                    timeout_seconds=args.fetch_timeout,
+                    max_retries=args.fetch_retries,
+                    retry_delay_seconds=args.retry_delay,
+                ),
                 source_repository=SourceRepository(connection),
                 article_repository=ArticleRepository(connection),
                 article_chunk_repository=chunk_repository,
@@ -155,7 +165,11 @@ def main() -> int:
     if args.command == "backfill-source":
         initialize_database(settings.database_path)
         with create_connection(settings.database_path) as connection:
-            fetcher = HttpFetcher()
+            fetcher = HttpFetcher(
+                timeout_seconds=args.fetch_timeout,
+                max_retries=args.fetch_retries,
+                retry_delay_seconds=args.retry_delay,
+            )
             chunk_repository = ArticleChunkRepository(connection)
             embedding_index_service = EmbeddingIndexService(
                 article_chunk_repository=chunk_repository,
