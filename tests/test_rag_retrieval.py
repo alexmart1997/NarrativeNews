@@ -183,6 +183,29 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(result.source_articles[0].id, target_article.id)
         self.assertTrue(all("иран" in chunk.chunk_text.lower() or "иран" in chunk.article_title.lower() for chunk in (result.top_chunks or [])))
 
+    def test_natural_language_query_is_normalized_to_topic_terms(self) -> None:
+        target_article = self._create_article(
+            title="Иран сделал заявление",
+            body_text="Иран сделал новое заявление по ядерной сделке и региональной безопасности.",
+            published_at="2026-04-21T10:00:00",
+        )
+        self._create_article(
+            title="Новости Москвы",
+            body_text="В Москве произошло ДТП с участием каршеринга и полицейской погони.",
+            published_at="2026-04-21T11:00:00",
+        )
+
+        result = self.rag_service.answer(
+            query="Что с Ираном",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+            include_debug_chunks=True,
+        )
+
+        self.assertEqual(len(result.source_articles), 1)
+        self.assertEqual(result.source_articles[0].id, target_article.id)
+
     def test_rag_answer_uses_reranked_chunks_and_returns_articles(self) -> None:
         first_article = self._create_article(
             title="Статья 1",
