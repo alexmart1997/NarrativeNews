@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 import math
 import re
 
-from app.models import Article, ChunkSearchResult, EmbeddedChunkCandidate, RAGAnswerResult
+from app.models import Article, ChunkSearchResult, RAGAnswerResult
 from app.repositories import ArticleChunkRepository, ArticleRepository
 from app.services.llm import BaseEmbeddingClient, BaseLLMClient
 
@@ -45,7 +45,8 @@ class RAGService:
     ) -> list[ChunkSearchResult]:
         candidates = self._hybrid_retrieve(query, date_from, date_to, limit=max(limit, self.hybrid_limit))
         reranked = self._rerank(query, candidates, limit=min(limit, self.rerank_limit))
-        return reranked[:limit]
+        filtered = self._filter_topical_chunks(query, reranked)
+        return filtered[:limit]
 
     def search(
         self,
@@ -102,7 +103,7 @@ class RAGService:
             merged[row.chunk_id] = replace(
                 row,
                 lexical_score=lexical_score,
-                final_score=0.65 * lexical_score + 0.10 * overlap_score,
+                final_score=0.65 * lexical_score + 0.15 * overlap_score,
             )
 
         vector_rows: list[ChunkSearchResult] = []
@@ -125,11 +126,8 @@ class RAGService:
             overlap_score = self._token_overlap_score(query_tokens, row.article_title, row.chunk_text)
             existing = merged.get(row.chunk_id)
             if existing is None:
-                final_score = 0.45 * row.vector_score + 0.15 * vector_rank_bonus + 0.15 * overlap_score
-                merged[row.chunk_id] = replace(
-                    row,
-                    final_score=final_score,
-                )
+                final_score = 0.45 * row.vector_score + 0.10 * vector_rank_bonus + 0.20 * overlap_score
+                merged[row.chunk_id] = replace(row, final_score=final_score)
                 continue
 
             combined_vector = max(existing.vector_score, row.vector_score)
@@ -137,7 +135,7 @@ class RAGService:
                 existing.final_score
                 + 0.25 * row.vector_score
                 + 0.05 * vector_rank_bonus
-                + 0.05 * overlap_score
+                + 0.10 * overlap_score
             )
             merged[row.chunk_id] = replace(
                 existing,
@@ -155,9 +153,9 @@ class RAGService:
             return []
 
         if lexical_hit:
-            ranked = [item for item in ranked if item.lexical_score > 0 or item.final_score >= 0.2]
+            ranked = [item for item in ranked if item.lexical_score > 0 or item.final_score >= 0.25]
         else:
-            ranked = [item for item in ranked if item.vector_score >= 0.55 or item.final_score >= 0.35]
+            ranked = [item for item in ranked if item.vector_score >= 0.60 or item.final_score >= 0.40]
 
         top = ranked[:limit]
         if not self._has_topical_match(query_tokens, top):
@@ -187,7 +185,7 @@ class RAGService:
             if similarity <= 0:
                 continue
             overlap_score = self._token_overlap_score(query_tokens, candidate.article_title, candidate.chunk_text)
-            final_score = 0.55 * similarity + 0.15 * overlap_score
+            final_score = 0.55 * similarity + 0.20 * overlap_score
             scored.append(
                 ChunkSearchResult(
                     chunk_id=candidate.chunk_id,
@@ -280,6 +278,44 @@ class RAGService:
             reverse=True,
         )
         return reranked[:limit]
+
+    def _filter_topical_chunks(self, query: str, chunks: list[ChunkSearchResult]) -> list[ChunkSearchResult]:
+        if not chunks:
+            return []
+
+        query_tokens = self._tokenize(query)
+        if not query_tokens:
+            return chunks
+
+        strict_matches: list[ChunkSearchResult] = []
+        strong_semantic_matches: list[ChunkSearchResult] = []
+        fallback_matches: list[ChunkSearchResult] = []
+
+        for chunk in chunks:
+            overlap = self._token_overlap_score(query_tokens, chunk.article_title, chunk.chunk_text)
+            if overlap > 0:
+                strict_matches.append(chunk)
+                continue
+            if self._is_strict_topic_query(query_tokens) and chunk.vector_score < 0.88:
+                continue
+            if chunk.vector_score >= 0.88:
+                strong_semantic_matches.append(chunk)
+                continue
+            if chunk.final_score >= 0.75:
+                fallback_matches.append(chunk)
+
+        if strict_matches:
+            merged: list[ChunkSearchResult] = []
+            seen: set[int] = set()
+            for chunk in strict_matches + strong_semantic_matches:
+                if chunk.chunk_id in seen:
+                    continue
+                seen.add(chunk.chunk_id)
+                merged.append(chunk)
+            return merged
+        if strong_semantic_matches:
+            return strong_semantic_matches
+        return fallback_matches or chunks
 
     def _generate_summary(self, query: str, chunks: list[ChunkSearchResult]) -> str:
         if not chunks:
@@ -382,9 +418,13 @@ class RAGService:
         for chunk in chunks[:3]:
             if self._token_overlap_score(query_tokens, chunk.article_title, chunk.chunk_text) > 0:
                 return True
-            if chunk.vector_score >= 0.72:
+            if chunk.vector_score >= 0.88:
                 return True
         return False
+
+    @staticmethod
+    def _is_strict_topic_query(query_tokens: list[str]) -> bool:
+        return len(query_tokens) <= 2 and all(len(token) >= 4 for token in query_tokens)
 
     @staticmethod
     def _cosine_similarity(left: list[float], right: list[float]) -> float:
