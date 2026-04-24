@@ -7,6 +7,8 @@ from pathlib import Path
 
 
 DEFAULT_DB_PATH = Path("data") / "narrative_news.db"
+DEPLOY_DB_PATH = Path("data") / "narrative_news_deploy.db"
+MIN_NONEMPTY_DB_BYTES = 1_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +34,7 @@ class Settings:
 
 @lru_cache(maxsize=1)
 def _cached_settings() -> Settings:
-    database_path = Path(os.getenv("NARRATIVE_NEWS_DB_PATH", DEFAULT_DB_PATH))
+    database_path = _resolve_database_path()
     log_level = os.getenv("NARRATIVE_NEWS_LOG_LEVEL", "INFO")
     llm_provider = os.getenv("NARRATIVE_NEWS_LLM_PROVIDER", "local_llama")
     llm_host = os.getenv("NARRATIVE_NEWS_LLM_HOST", "127.0.0.1")
@@ -66,6 +68,25 @@ def _cached_settings() -> Settings:
         rag_hybrid_limit=rag_hybrid_limit,
         rag_rerank_limit=rag_rerank_limit,
     )
+
+
+def _resolve_database_path() -> Path:
+    env_database_path = os.getenv("NARRATIVE_NEWS_DB_PATH")
+    if env_database_path:
+        return Path(env_database_path)
+
+    if DEFAULT_DB_PATH.exists() and _looks_like_real_database(DEFAULT_DB_PATH):
+        return DEFAULT_DB_PATH
+    if DEPLOY_DB_PATH.exists():
+        return DEPLOY_DB_PATH
+    return DEFAULT_DB_PATH
+
+
+def _looks_like_real_database(database_path: Path) -> bool:
+    try:
+        return database_path.stat().st_size >= MIN_NONEMPTY_DB_BYTES
+    except OSError:
+        return False
 
 
 def get_settings(database_path: Path | None = None) -> Settings:
