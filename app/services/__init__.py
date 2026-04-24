@@ -1,3 +1,4 @@
+from app.services.claim_batch import ClaimBatchResult, ClaimBatchService
 from app.services.claim_extraction import ClaimExtractor, SimpleHeuristicClaimLLMClient
 from app.services.chunking import ChunkingConfig, ChunkingService
 from app.services.deduplication import DeduplicationResult, DeduplicationService
@@ -25,6 +26,8 @@ __all__ = [
     "ArticleNormalizer",
     "BaseEmbeddingClient",
     "BaseLLMClient",
+    "ClaimBatchResult",
+    "ClaimBatchService",
     "ClaimExtractor",
     "ClaimGrouper",
     "ChunkingConfig",

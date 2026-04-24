@@ -13,7 +13,7 @@ from app.ingestion.fetcher import HttpFetcher
 from app.ingestion.pipeline import BulkIngestionService, IngestionPipeline
 from app.ingestion.sources import SOURCE_CONFIGS, get_source_config
 from app.repositories import ArticleChunkRepository, ArticleRepository, ClaimRepository, SourceRepository
-from app.services import EmbeddingIndexService, create_embedding_client
+from app.services import ClaimBatchService, ClaimExtractor, EmbeddingIndexService, create_embedding_client, create_llm_client
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,6 +77,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     embedding_parser.add_argument("--db-path", type=Path, default=None)
     embedding_parser.add_argument("--limit", type=int, default=200)
+
+    claims_parser = subparsers.add_parser(
+        "extract-claims-batch",
+        help="Extract claims for canonical articles that do not have claims yet.",
+    )
+    claims_parser.add_argument("--db-path", type=Path, default=None)
+    claims_parser.add_argument("--date-from", type=str, default=None)
+    claims_parser.add_argument("--date-to", type=str, default=None)
+    claims_parser.add_argument("--limit", type=int, default=100)
 
     return parser
 
@@ -158,6 +167,21 @@ def main() -> int:
             )
             indexed = service.index_missing_embeddings(limit=args.limit)
         print(f"Indexed embeddings for {indexed} chunks.")
+        return 0
+    if args.command == "extract-claims-batch":
+        initialize_database(settings.database_path)
+        with create_connection(settings.database_path) as connection:
+            service = ClaimBatchService(
+                article_repository=ArticleRepository(connection),
+                claim_repository=ClaimRepository(connection),
+                claim_extractor=ClaimExtractor(llm_client=create_llm_client(settings)),
+            )
+            result = service.extract_missing_claims(
+                date_from=args.date_from,
+                date_to=args.date_to,
+                limit=args.limit,
+            )
+        print(result)
         return 0
 
     parser.error(f"Unsupported command: {args.command}")

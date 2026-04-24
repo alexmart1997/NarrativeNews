@@ -93,6 +93,35 @@ class ArticleRepository(BaseRepository):
         )
         return [self._row_to_article(row) for row in rows]
 
+    def list_canonical_articles_without_claims(
+        self,
+        *,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 100,
+    ) -> list[Article]:
+        clauses = [
+            "a.is_canonical = 1",
+            "NOT EXISTS (SELECT 1 FROM claims c WHERE c.article_id = a.id)",
+        ]
+        params: list[object] = []
+        if date_from is not None and date_to is not None:
+            clauses.append("a.published_at BETWEEN ? AND ?")
+            params.extend([date_from, date_to])
+
+        params.append(limit)
+        rows = self._fetch_all(
+            f"""
+            SELECT a.*
+            FROM articles a
+            WHERE {' AND '.join(clauses)}
+            ORDER BY a.published_at ASC, a.id ASC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        return [self._row_to_article(row) for row in rows]
+
     def search_canonical_articles_by_topic_and_date_range(
         self,
         topic_text: str,
