@@ -18,13 +18,23 @@ from app.models.narrative import (
     NarrativeResultArticleCreate,
     NarrativeResultCreate,
 )
-from app.models.rag import ArticleChunk, ArticleChunkCreate, ChunkSearchResult, RAGAnswerResult
+from app.models.rag import (
+    ArticleChunk,
+    ArticleChunkCreate,
+    ArticleChunkEmbedding,
+    ArticleChunkEmbeddingCreate,
+    ChunkSearchResult,
+    EmbeddedChunkCandidate,
+    RAGAnswerResult,
+)
 
 __all__ = [
     "Article",
     "ArticleCreate",
     "ArticleChunk",
     "ArticleChunkCreate",
+    "ArticleChunkEmbedding",
+    "ArticleChunkEmbeddingCreate",
     "Claim",
     "ClaimCluster",
     "ClaimClusterCreate",
@@ -32,6 +42,7 @@ __all__ = [
     "ClaimDraft",
     "ClaimCreate",
     "ChunkSearchResult",
+    "EmbeddedChunkCandidate",
     "GroupedClaimCluster",
     "NarrativeResult",
     "NarrativeResultArticleCreate",

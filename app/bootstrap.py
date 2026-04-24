@@ -17,10 +17,12 @@ from app.services import (
     ClaimGrouper,
     ClaimExtractor,
     ChunkingService,
+    EmbeddingIndexService,
     NarrativeLabelingService,
     NarrativeRunService,
     NarrativeScorer,
     RAGService,
+    create_embedding_client,
     create_llm_client,
 )
 
@@ -36,6 +38,7 @@ class AppServices:
     narrative_result_repository: NarrativeResultRepository
     claim_extractor: ClaimExtractor
     chunking_service: ChunkingService
+    embedding_index_service: EmbeddingIndexService
     rag_service: RAGService
     narrative_run_service: NarrativeRunService
 
@@ -50,13 +53,21 @@ def build_app_services(connection: Connection, settings: Settings) -> AppService
     narrative_result_repository = NarrativeResultRepository(connection)
 
     llm_client = create_llm_client(settings)
+    embedding_client = create_embedding_client(settings)
 
     claim_extractor = ClaimExtractor(llm_client=llm_client)
     chunking_service = ChunkingService()
+    embedding_index_service = EmbeddingIndexService(
+        article_chunk_repository=article_chunk_repository,
+        embedding_client=embedding_client,
+    )
     rag_service = RAGService(
         article_chunk_repository=article_chunk_repository,
         article_repository=article_repository,
         llm_client=llm_client,
+        embedding_client=embedding_client,
+        hybrid_limit=settings.rag_hybrid_limit,
+        rerank_limit=settings.rag_rerank_limit,
     )
     narrative_run_service = NarrativeRunService(
         article_repository=article_repository,
@@ -79,6 +90,7 @@ def build_app_services(connection: Connection, settings: Settings) -> AppService
         narrative_result_repository=narrative_result_repository,
         claim_extractor=claim_extractor,
         chunking_service=chunking_service,
+        embedding_index_service=embedding_index_service,
         rag_service=rag_service,
         narrative_run_service=narrative_run_service,
     )

@@ -60,6 +60,24 @@ CREATE TABLE IF NOT EXISTS article_chunks (
     UNIQUE (article_id, chunk_index)
 );
 
+CREATE VIRTUAL TABLE IF NOT EXISTS article_chunks_fts USING fts5(
+    chunk_text,
+    article_title,
+    content='',
+    tokenize='unicode61'
+);
+
+CREATE TABLE IF NOT EXISTS article_chunk_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chunk_id INTEGER NOT NULL,
+    model_name TEXT NOT NULL,
+    embedding_json TEXT NOT NULL,
+    dimension INTEGER NOT NULL CHECK (dimension > 0),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (chunk_id) REFERENCES article_chunks(id) ON DELETE CASCADE,
+    UNIQUE (chunk_id, model_name)
+);
+
 CREATE TABLE IF NOT EXISTS claims (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     article_id INTEGER NOT NULL,
@@ -143,14 +161,62 @@ CREATE INDEX IF NOT EXISTS idx_articles_source_id ON articles(source_id);
 CREATE INDEX IF NOT EXISTS idx_articles_is_canonical ON articles(is_canonical);
 CREATE INDEX IF NOT EXISTS idx_articles_content_hash ON articles(content_hash);
 CREATE INDEX IF NOT EXISTS idx_articles_duplicate_group_id ON articles(duplicate_group_id);
+CREATE INDEX IF NOT EXISTS idx_article_chunks_article_id ON article_chunks(article_id);
+CREATE INDEX IF NOT EXISTS idx_article_chunk_embeddings_chunk_id ON article_chunk_embeddings(chunk_id);
+CREATE INDEX IF NOT EXISTS idx_article_chunk_embeddings_model_name ON article_chunk_embeddings(model_name);
 CREATE INDEX IF NOT EXISTS idx_claims_article_id ON claims(article_id);
 CREATE INDEX IF NOT EXISTS idx_claims_claim_type ON claims(claim_type);
 CREATE INDEX IF NOT EXISTS idx_narrative_runs_topic_text ON narrative_runs(topic_text);
 CREATE INDEX IF NOT EXISTS idx_claim_clusters_run_id ON claim_clusters(run_id);
 CREATE INDEX IF NOT EXISTS idx_claim_clusters_claim_type ON claim_clusters(claim_type);
+
+CREATE TRIGGER IF NOT EXISTS trg_article_chunks_fts_insert
+AFTER INSERT ON article_chunks
+BEGIN
+    INSERT INTO article_chunks_fts(rowid, chunk_text, article_title)
+    VALUES (
+        NEW.id,
+        NEW.chunk_text,
+        COALESCE((SELECT title FROM articles WHERE id = NEW.article_id), '')
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_article_chunks_fts_delete
+AFTER DELETE ON article_chunks
+BEGIN
+    DELETE FROM article_chunks_fts WHERE rowid = OLD.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_article_chunks_fts_update
+AFTER UPDATE OF chunk_text, article_id ON article_chunks
+BEGIN
+    DELETE FROM article_chunks_fts WHERE rowid = OLD.id;
+    INSERT INTO article_chunks_fts(rowid, chunk_text, article_title)
+    VALUES (
+        NEW.id,
+        NEW.chunk_text,
+        COALESCE((SELECT title FROM articles WHERE id = NEW.article_id), '')
+    );
+END;
 """
 
 
 def create_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA_SQL)
+    connection.execute(
+        """
+        INSERT INTO article_chunks_fts(rowid, chunk_text, article_title)
+        SELECT
+            ac.id,
+            ac.chunk_text,
+            a.title
+        FROM article_chunks ac
+        INNER JOIN articles a ON a.id = ac.article_id
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM article_chunks_fts fts
+            WHERE fts.rowid = ac.id
+        )
+        """
+    )
     connection.commit()

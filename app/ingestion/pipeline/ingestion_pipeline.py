@@ -14,7 +14,13 @@ from app.ingestion.pipeline.validation import (
 from app.ingestion.sources import SourceConfig
 from app.models import ArticleCreate, SourceCreate
 from app.repositories import ArticleChunkRepository, ArticleRepository, ClaimRepository, SourceRepository
-from app.services import ArticleNormalizer, ClaimExtractor, ChunkingService, DeduplicationService
+from app.services import (
+    ArticleNormalizer,
+    ClaimExtractor,
+    ChunkingService,
+    DeduplicationService,
+    EmbeddingIndexService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +52,11 @@ class IngestionPipeline:
         deduplication_service: DeduplicationService | None = None,
         chunking_service: ChunkingService | None = None,
         claim_extractor: ClaimExtractor | None = None,
+        embedding_index_service: EmbeddingIndexService | None = None,
         min_body_length: int = 120,
         enable_chunking: bool = True,
         enable_claim_extraction: bool = True,
+        enable_embeddings: bool = True,
     ) -> None:
         self.fetcher = fetcher
         self.source_repository = source_repository
@@ -61,9 +69,11 @@ class IngestionPipeline:
         self.deduplication_service = deduplication_service or DeduplicationService(article_repository)
         self.chunking_service = chunking_service or ChunkingService()
         self.claim_extractor = claim_extractor or ClaimExtractor()
+        self.embedding_index_service = embedding_index_service
         self.min_body_length = min_body_length
         self.enable_chunking = enable_chunking
         self.enable_claim_extraction = enable_claim_extraction
+        self.enable_embeddings = enable_embeddings
 
     def run_once(self, source_config: SourceConfig, *, limit: int | None = None) -> IngestionRunResult:
         source = self._get_or_create_source(source_config)
@@ -142,7 +152,13 @@ class IngestionPipeline:
                 ):
                     chunks = self.chunking_service.chunk_article(saved_article)
                     if chunks:
-                        self.article_chunk_repository.create_many(chunks)
+                        created_chunks = self.article_chunk_repository.create_many(chunks)
+                        if (
+                            self.enable_embeddings
+                            and self.embedding_index_service is not None
+                            and created_chunks
+                        ):
+                            self.embedding_index_service.index_chunks(created_chunks)
                 if (
                     self.enable_claim_extraction
                     and self.claim_repository is not None

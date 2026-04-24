@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import json
+import re
 import sqlite3
 
-from app.models import ArticleChunk, ArticleChunkCreate, ChunkSearchResult
+from app.models import (
+    ArticleChunk,
+    ArticleChunkCreate,
+    ArticleChunkEmbedding,
+    ChunkSearchResult,
+    EmbeddedChunkCandidate,
+)
 from app.repositories.base import BaseRepository
+
+
+TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]{2,}")
 
 
 class ArticleChunkRepository(BaseRepository):
@@ -44,6 +55,53 @@ class ArticleChunkRepository(BaseRepository):
         )
         return [self._row_to_chunk(row) for row in rows]
 
+    def list_chunks_without_embeddings(self, model_name: str, limit: int = 100) -> list[ArticleChunk]:
+        rows = self._fetch_all(
+            """
+            SELECT ac.*
+            FROM article_chunks ac
+            LEFT JOIN article_chunk_embeddings ace
+              ON ace.chunk_id = ac.id AND ace.model_name = ?
+            WHERE ace.id IS NULL
+            ORDER BY ac.id ASC
+            LIMIT ?
+            """,
+            (model_name, limit),
+        )
+        return [self._row_to_chunk(row) for row in rows]
+
+    def upsert_chunk_embedding(
+        self,
+        *,
+        chunk_id: int,
+        model_name: str,
+        embedding: list[float],
+    ) -> ArticleChunkEmbedding:
+        payload = json.dumps(embedding, ensure_ascii=False)
+        self.connection.execute(
+            """
+            INSERT INTO article_chunk_embeddings (chunk_id, model_name, embedding_json, dimension)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chunk_id, model_name) DO UPDATE SET
+                embedding_json = excluded.embedding_json,
+                dimension = excluded.dimension,
+                created_at = CURRENT_TIMESTAMP
+            """,
+            (chunk_id, model_name, payload, len(embedding)),
+        )
+        self.connection.commit()
+        row = self._fetch_one(
+            """
+            SELECT *
+            FROM article_chunk_embeddings
+            WHERE chunk_id = ? AND model_name = ?
+            """,
+            (chunk_id, model_name),
+        )
+        if row is None:
+            raise RuntimeError("Failed to load saved chunk embedding.")
+        return self._row_to_embedding(row)
+
     def search_chunks(
         self,
         query: str,
@@ -51,17 +109,55 @@ class ArticleChunkRepository(BaseRepository):
         date_to: str,
         limit: int = 10,
     ) -> list[ChunkSearchResult]:
-        tokens = [token.strip() for token in query.split() if token.strip()]
+        return self.search_chunks_lexical(query, date_from, date_to, limit)
+
+    def search_chunks_lexical(
+        self,
+        query: str,
+        date_from: str,
+        date_to: str,
+        limit: int = 20,
+    ) -> list[ChunkSearchResult]:
+        tokens = self._tokenize(query)
         if not tokens:
             return []
 
-        where_parts = []
-        params: list[object] = [date_from, date_to]
-        for token in tokens:
-            where_parts.append("ac.chunk_text LIKE ?")
-            params.append(f"%{token}%")
+        match_query = " OR ".join(f"{token}*" for token in tokens)
+        try:
+            rows = self._fetch_all(
+                """
+                SELECT
+                    ac.id AS chunk_id,
+                    ac.article_id AS article_id,
+                    ac.chunk_index AS chunk_index,
+                    ac.chunk_text AS chunk_text,
+                    a.published_at AS published_at,
+                    a.title AS article_title,
+                    bm25(article_chunks_fts) AS match_score
+                FROM article_chunks_fts
+                INNER JOIN article_chunks ac ON ac.id = article_chunks_fts.rowid
+                INNER JOIN articles a ON a.id = ac.article_id
+                WHERE article_chunks_fts MATCH ?
+                  AND a.is_canonical = 1
+                  AND a.published_at BETWEEN ? AND ?
+                ORDER BY match_score ASC, a.published_at DESC, ac.article_id ASC, ac.chunk_index ASC
+                LIMIT ?
+                """,
+                (match_query, date_from, date_to, limit),
+            )
+            return [self._row_to_search_result(row) for row in rows]
+        except sqlite3.OperationalError:
+            return self._search_chunks_like(query, date_from, date_to, limit)
 
-        query_sql = f"""
+    def list_vector_candidates(
+        self,
+        *,
+        model_name: str,
+        date_from: str,
+        date_to: str,
+    ) -> list[EmbeddedChunkCandidate]:
+        rows = self._fetch_all(
+            """
             SELECT
                 ac.id AS chunk_id,
                 ac.article_id AS article_id,
@@ -69,7 +165,76 @@ class ArticleChunkRepository(BaseRepository):
                 ac.chunk_text AS chunk_text,
                 a.published_at AS published_at,
                 a.title AS article_title,
-                ({' + '.join(['CASE WHEN ac.chunk_text LIKE ? THEN 1 ELSE 0 END' for _ in tokens])}) AS match_score
+                ace.embedding_json AS embedding_json
+            FROM article_chunk_embeddings ace
+            INNER JOIN article_chunks ac ON ac.id = ace.chunk_id
+            INNER JOIN articles a ON a.id = ac.article_id
+            WHERE ace.model_name = ?
+              AND a.is_canonical = 1
+              AND a.published_at BETWEEN ? AND ?
+            ORDER BY a.published_at DESC, ac.article_id ASC, ac.chunk_index ASC
+            """,
+            (model_name, date_from, date_to),
+        )
+
+        candidates: list[EmbeddedChunkCandidate] = []
+        for row in rows:
+            try:
+                embedding = json.loads(row["embedding_json"])
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(embedding, list) or not embedding:
+                continue
+            try:
+                vector = [float(value) for value in embedding]
+            except (TypeError, ValueError):
+                continue
+            candidates.append(
+                EmbeddedChunkCandidate(
+                    chunk_id=row["chunk_id"],
+                    article_id=row["article_id"],
+                    chunk_index=row["chunk_index"],
+                    chunk_text=row["chunk_text"],
+                    published_at=row["published_at"],
+                    article_title=row["article_title"],
+                    embedding=vector,
+                )
+            )
+        return candidates
+
+    def _search_chunks_like(
+        self,
+        query: str,
+        date_from: str,
+        date_to: str,
+        limit: int,
+    ) -> list[ChunkSearchResult]:
+        tokens = self._tokenize(query)
+        if not tokens:
+            return []
+
+        where_parts = []
+        params: list[object] = []
+        score_parts: list[str] = []
+        for token in tokens:
+            where_parts.append("(ac.chunk_text LIKE ? OR a.title LIKE ?)")
+            params.extend([f"%{token}%", f"%{token}%"])
+            score_parts.append("CASE WHEN ac.chunk_text LIKE ? OR a.title LIKE ? THEN 1 ELSE 0 END")
+
+        score_params: list[object] = []
+        for token in tokens:
+            score_params.extend([f"%{token}%", f"%{token}%"])
+
+        rows = self._fetch_all(
+            f"""
+            SELECT
+                ac.id AS chunk_id,
+                ac.article_id AS article_id,
+                ac.chunk_index AS chunk_index,
+                ac.chunk_text AS chunk_text,
+                a.published_at AS published_at,
+                a.title AS article_title,
+                ({' + '.join(score_parts)}) AS match_score
             FROM article_chunks ac
             INNER JOIN articles a ON a.id = ac.article_id
             WHERE a.is_canonical = 1
@@ -77,11 +242,22 @@ class ArticleChunkRepository(BaseRepository):
               AND ({' OR '.join(where_parts)})
             ORDER BY match_score DESC, a.published_at DESC, ac.article_id ASC, ac.chunk_index ASC
             LIMIT ?
-        """
-        score_params = [f"%{token}%" for token in tokens]
-        final_params = tuple(score_params + params + [limit])
-        rows = self._fetch_all(query_sql, final_params)
+            """,
+            tuple(score_params + [date_from, date_to] + params + [limit]),
+        )
         return [self._row_to_search_result(row) for row in rows]
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        seen: set[str] = set()
+        tokens: list[str] = []
+        for match in TOKEN_RE.finditer(text.lower()):
+            token = match.group(0)
+            if token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+        return tokens
 
     @staticmethod
     def _row_to_chunk(row: sqlite3.Row) -> ArticleChunk:
@@ -97,6 +273,17 @@ class ArticleChunkRepository(BaseRepository):
         )
 
     @staticmethod
+    def _row_to_embedding(row: sqlite3.Row) -> ArticleChunkEmbedding:
+        return ArticleChunkEmbedding(
+            id=row["id"],
+            chunk_id=row["chunk_id"],
+            model_name=row["model_name"],
+            embedding=json.loads(row["embedding_json"]),
+            dimension=row["dimension"],
+            created_at=row["created_at"],
+        )
+
+    @staticmethod
     def _row_to_search_result(row: sqlite3.Row) -> ChunkSearchResult:
         return ChunkSearchResult(
             chunk_id=row["chunk_id"],
@@ -105,5 +292,5 @@ class ArticleChunkRepository(BaseRepository):
             chunk_text=row["chunk_text"],
             published_at=row["published_at"],
             article_title=row["article_title"],
-            match_score=row["match_score"],
+            match_score=float(row["match_score"] or 0.0),
         )
