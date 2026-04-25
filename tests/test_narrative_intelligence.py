@@ -22,6 +22,7 @@ from app.services.narrative_intelligence import (
     HybridNarrativeClassifier,
     NarrativeFrameTextFormatter,
     RollingWindowNarrativeDynamicsAnalyzer,
+    _coerce_string_tuple,
     _to_embedding_matrix,
 )
 
@@ -269,6 +270,11 @@ class NarrativeIntelligenceTests(unittest.TestCase):
 
         self.assertEqual(matrix.shape, (2, 2))
         self.assertEqual(matrix.dtype.kind, "f")
+
+    def test_string_tuple_helper_accepts_none_and_scalar_values(self) -> None:
+        self.assertEqual(_coerce_string_tuple(None), ())
+        self.assertEqual(_coerce_string_tuple(" actor "), ("actor",))
+        self.assertEqual(_coerce_string_tuple([" a ", None, ""]), ("a",))
 
 
 if __name__ == "__main__":

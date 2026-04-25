@@ -333,9 +333,9 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
         if not isinstance(raw_frame, dict):
             return None
         status = str(raw_frame.get("status", "ok"))
-        actors = tuple(str(item) for item in raw_frame.get("actors", []) if str(item).strip())
-        implications = tuple(str(item) for item in raw_frame.get("implications", []) if str(item).strip())
-        quotes = tuple(str(item) for item in raw_frame.get("representative_quotes", []) if str(item).strip())
+        actors = _coerce_string_tuple(raw_frame.get("actors"))
+        implications = _coerce_string_tuple(raw_frame.get("implications"))
+        quotes = _coerce_string_tuple(raw_frame.get("representative_quotes"))
         confidence = raw_frame.get("confidence")
         confidence_value = float(confidence) if isinstance(confidence, (int, float)) else None
         return NarrativeFrame(
@@ -529,14 +529,12 @@ class LLMNarrativeLabeler(NarrativeLabeler):
             title=str(payload.get("title", "")).strip(),
             summary=str(payload.get("summary", "")).strip(),
             canonical_claim=str(payload.get("canonical_claim", "")).strip(),
-            typical_formulations=tuple(str(item) for item in payload.get("typical_formulations", []) if str(item).strip()),
-            key_actors=tuple(str(item) for item in payload.get("key_actors", []) if str(item).strip()),
-            causal_chain=tuple(str(item) for item in payload.get("causal_chain", []) if str(item).strip()),
+            typical_formulations=_coerce_string_tuple(payload.get("typical_formulations")),
+            key_actors=_coerce_string_tuple(payload.get("key_actors")),
+            causal_chain=_coerce_string_tuple(payload.get("causal_chain")),
             dominant_tone=_coerce_optional_text(payload.get("dominant_tone")),
             counter_narrative=_coerce_optional_text(payload.get("counter_narrative")),
-            representative_examples=tuple(
-                str(item) for item in payload.get("representative_examples", []) if str(item).strip()
-            ),
+            representative_examples=_coerce_string_tuple(payload.get("representative_examples")),
             metadata={"raw_json": payload},
         )
 
@@ -793,6 +791,22 @@ def _coerce_optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _coerce_string_tuple(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (list, tuple, set)):
+        items: list[str] = []
+        for item in value:
+            if item is None:
+                continue
+            text = str(item).strip()
+            if text:
+                items.append(text)
+        return tuple(items)
+    text = str(value).strip()
+    return (text,) if text else ()
 
 
 def _to_embedding_matrix(vectors: Sequence[Sequence[float]]) -> object:
