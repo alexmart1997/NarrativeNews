@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict, is_dataclass
 from datetime import date
+import json
 from pathlib import Path
 
+from app.bootstrap import build_narrative_intelligence_services
 from app.config.logging import configure_logging
 from app.config.settings import get_settings
 from app.db.connection import create_connection
@@ -62,6 +65,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     embedding_parser.add_argument("--db-path", type=Path, default=None)
     embedding_parser.add_argument("--limit", type=int, default=200)
+
+    narrative_parser = subparsers.add_parser(
+        "analyze-narratives",
+        help="Run narrative intelligence over the existing corpus without changing the database schema.",
+    )
+    narrative_parser.add_argument("--db-path", type=Path, default=None)
+    narrative_parser.add_argument("--date-from", required=True)
+    narrative_parser.add_argument("--date-to", required=True)
+    narrative_parser.add_argument(
+        "--source-domains",
+        default=None,
+        help="Comma-separated source domains, e.g. ria.ru,lenta.ru",
+    )
+    narrative_parser.add_argument(
+        "--output-path",
+        type=Path,
+        default=None,
+        help="Optional JSON file path for the full narrative intelligence result.",
+    )
 
     return parser
 
@@ -152,5 +174,57 @@ def main() -> int:
         print(f"Indexed embeddings for {indexed} chunks.")
         return 0
 
+    if args.command == "analyze-narratives":
+        initialize_database(settings.database_path)
+        source_domains = _parse_source_domains(args.source_domains)
+        with create_connection(settings.database_path) as connection:
+            pipeline = build_narrative_intelligence_services(connection, settings)
+            result = pipeline.run(
+                date_from=args.date_from,
+                date_to=args.date_to,
+                source_domains=source_domains,
+            )
+        if args.output_path is not None:
+            args.output_path.parent.mkdir(parents=True, exist_ok=True)
+            args.output_path.write_text(
+                json.dumps(_to_jsonable(result), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            print(f"Narrative intelligence result saved to {args.output_path}")
+        else:
+            print(
+                json.dumps(
+                    {
+                        "documents": len(result.documents),
+                        "topics": len(result.topics),
+                        "frames": len(result.frames),
+                        "clusters": len(result.clusters),
+                        "labels": len(result.labels),
+                        "assignments": len(result.assignments),
+                        "dynamics": len(result.dynamics),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        return 0
+
     parser.error(f"Unsupported command: {args.command}")
     return 1
+
+
+def _parse_source_domains(raw_value: str | None) -> list[str] | None:
+    if raw_value is None:
+        return None
+    domains = [item.strip() for item in raw_value.split(",") if item.strip()]
+    return domains or None
+
+
+def _to_jsonable(value):
+    if is_dataclass(value):
+        return {key: _to_jsonable(item) for key, item in asdict(value).items()}
+    if isinstance(value, dict):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(item) for item in value]
+    return value

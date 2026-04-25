@@ -8,9 +8,23 @@ from app.models.rag import (
     EmbeddedChunkCandidate,
     RAGAnswerResult,
 )
+from app.models.narrative_intelligence import (
+    ArticleAnalysisDocument,
+    NarrativeAssignment,
+    NarrativeCluster,
+    NarrativeClusterLabel,
+    NarrativeDynamicsPoint,
+    NarrativeDynamicsSeries,
+    NarrativeEvaluationReport,
+    NarrativeFrame,
+    NarrativeFrameEmbedding,
+    NarrativeIntelligenceRunResult,
+    TopicCandidate,
+)
 
 __all__ = [
     "Article",
+    "ArticleAnalysisDocument",
     "ArticleCreate",
     "ArticleChunk",
     "ArticleChunkCreate",
@@ -18,7 +32,17 @@ __all__ = [
     "ArticleChunkEmbeddingCreate",
     "ChunkSearchResult",
     "EmbeddedChunkCandidate",
+    "NarrativeAssignment",
+    "NarrativeCluster",
+    "NarrativeClusterLabel",
+    "NarrativeDynamicsPoint",
+    "NarrativeDynamicsSeries",
+    "NarrativeEvaluationReport",
+    "NarrativeFrame",
+    "NarrativeFrameEmbedding",
+    "NarrativeIntelligenceRunResult",
     "RAGAnswerResult",
     "Source",
     "SourceCreate",
+    "TopicCandidate",
 ]
