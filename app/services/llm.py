@@ -44,10 +44,7 @@ class BaseLLMClient(ABC):
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise LLMError("LLM returned invalid JSON.") from exc
+        payload = _parse_json_object(raw)
         if not isinstance(payload, dict):
             raise LLMError("LLM returned JSON that is not an object.")
         return payload
@@ -215,3 +212,25 @@ def create_embedding_client(settings: Settings) -> BaseEmbeddingClient | None:
             timeout_seconds=settings.embedding_timeout_seconds,
         )
     )
+
+
+def _parse_json_object(raw: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        return payload
+
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = raw[start : end + 1]
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            raise LLMError("LLM returned invalid JSON.") from exc
+        if isinstance(payload, dict):
+            return payload
+
+    raise LLMError("LLM returned invalid JSON.")

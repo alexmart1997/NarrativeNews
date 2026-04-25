@@ -5,7 +5,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from app.services import LocalLlamaClient, LocalLlamaConfig
+from app.services import LLMError, LocalLlamaClient, LocalLlamaConfig
+from app.services.llm import _parse_json_object
 
 
 class MockHTTPResponse:
@@ -39,6 +40,15 @@ class LocalLlamaClientTests(unittest.TestCase):
 
         self.assertEqual(result, "ok")
         self.assertEqual(mocked.call_count, 1)
+
+    def test_parse_json_object_accepts_wrapped_json(self) -> None:
+        payload = _parse_json_object('Here is the result:\n{"frames": []}\nThanks.')
+
+        self.assertEqual(payload, {"frames": []})
+
+    def test_parse_json_object_rejects_non_json(self) -> None:
+        with self.assertRaises(LLMError):
+            _parse_json_object("not json at all")
 
 
 if __name__ == "__main__":
