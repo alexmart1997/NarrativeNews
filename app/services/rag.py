@@ -10,96 +10,129 @@ from app.services.llm import BaseEmbeddingClient, BaseLLMClient
 
 
 TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]{2,}")
-CHINESE_RE = re.compile(r"[\u4e00-\u9fff]")
+CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
 STOPWORDS = {
     "что",
     "как",
     "где",
     "когда",
-    "почему",
-    "зачем",
-    "какой",
-    "какая",
-    "какие",
-    "какое",
-    "каков",
-    "какова",
-    "каковы",
-    "есть",
     "это",
     "эта",
     "этот",
     "эти",
     "про",
-    "по",
-    "с",
-    "со",
-    "о",
-    "об",
-    "обо",
-    "от",
-    "до",
     "для",
+    "при",
+    "или",
+    "его",
+    "ее",
+    "её",
+    "она",
+    "они",
+    "оно",
+    "есть",
+    "был",
+    "была",
+    "были",
+    "так",
+    "еще",
+    "ещё",
+    "уже",
+    "над",
+    "под",
+    "без",
+    "после",
+    "перед",
+    "между",
+    "если",
+    "чем",
+    "ли",
+    "же",
+    "по",
     "на",
     "в",
     "во",
     "из",
-    "у",
-    "ли",
-    "же",
-    "ну",
+    "к",
+    "ко",
+    "с",
+    "со",
+    "о",
+    "об",
+    "от",
+    "до",
+    "за",
+    "не",
     "а",
     "и",
-    "или",
     "но",
+}
+BROAD_TERMS = {
+    "россия",
+    "россии",
+    "россию",
+    "россий",
+    "страна",
+    "страны",
+    "сша",
+    "европа",
+    "европы",
+    "москва",
+    "москвы",
+    "украина",
+    "украины",
+    "украину",
 }
 RUSSIAN_ENDINGS = (
     "иями",
     "ями",
     "ами",
-    "ями",
+    "его",
     "ого",
     "ему",
     "ому",
-    "ими",
-    "его",
-    "ать",
-    "ять",
-    "ить",
-    "ией",
-    "ией",
-    "ией",
-    "ией",
-    "ов",
-    "ев",
-    "ом",
-    "ем",
-    "ам",
-    "ям",
+    "иях",
     "ах",
     "ях",
     "ия",
+    "ья",
     "ие",
-    "ий",
+    "ые",
     "ой",
+    "ий",
+    "ый",
+    "ая",
+    "яя",
+    "ое",
+    "ее",
+    "ам",
+    "ям",
+    "ом",
+    "ем",
+    "ов",
+    "ев",
     "ей",
-    "ою",
-    "ею",
-    "иям",
-    "ием",
     "ию",
     "ью",
-    "ия",
+    "ых",
+    "их",
+    "ую",
+    "юю",
     "а",
     "я",
-    "у",
-    "ю",
     "ы",
     "и",
     "е",
+    "у",
+    "ю",
     "о",
-    "й",
-    "м",
+)
+NOISE_PATTERNS = (
+    re.compile(r"ваш браузер не поддерживает", re.IGNORECASE),
+    re.compile(r"данный формат видео", re.IGNORECASE),
+    re.compile(r"смотрите видео", re.IGNORECASE),
+    re.compile(r"подпишит", re.IGNORECASE),
+    re.compile(r"ria\.ru/\d+", re.IGNORECASE),
 )
 
 
@@ -134,16 +167,21 @@ class RAGService:
         limit: int = 10,
         source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
+        query_terms = self._extract_query_terms(query)
+        if not query_terms:
+            return []
+
         candidates = self._hybrid_retrieve(
-            query,
-            date_from,
-            date_to,
-            limit=max(limit, self.hybrid_limit),
+            query_terms=query_terms,
+            date_from=date_from,
+            date_to=date_to,
+            limit=max(limit * 3, self.hybrid_limit),
             source_domains=source_domains,
         )
-        reranked = self._rerank(query, candidates, limit=min(limit, self.rerank_limit))
-        filtered = self._filter_topical_chunks(query, reranked)
-        return filtered[:limit]
+        reranked = self._rerank(query, candidates, limit=max(limit * 2, self.rerank_limit))
+        filtered = self._filter_topical_chunks(query_terms, reranked)
+        diversified = self._diversify_chunks(filtered, max_per_article=2)
+        return diversified[:limit]
 
     def search(
         self,
@@ -171,23 +209,19 @@ class RAGService:
         summary_text = self._generate_summary(query, chunks)
         return RAGAnswerResult(
             summary_text=summary_text,
-            source_articles=source_articles[:5],
+            source_articles=source_articles,
             top_chunks=chunks if include_debug_chunks else None,
         )
 
     def _hybrid_retrieve(
         self,
-        query: str,
+        *,
+        query_terms: list[dict[str, str]],
         date_from: str,
         date_to: str,
-        *,
         limit: int,
         source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
-        query_terms = self._extract_query_terms(query)
-        if not query_terms:
-            return []
-
         lexical_query = self._build_lexical_query(query_terms)
         lexical_rows = self.article_chunk_repository.search_chunks_lexical(
             lexical_query,
@@ -197,16 +231,23 @@ class RAGService:
             source_domains=source_domains,
         )
 
+        anchor_terms = self._anchor_terms(query_terms)
         merged: dict[int, ChunkSearchResult] = {}
-        lexical_hit = False
         for rank, row in enumerate(lexical_rows, start=1):
             lexical_score = 1.0 / rank
             overlap_score = self._token_overlap_score(query_terms, row.article_title, row.chunk_text)
-            lexical_hit = lexical_hit or overlap_score > 0
+            anchor_score = self._anchor_overlap_score(anchor_terms, row.article_title, row.chunk_text)
+            quality_score = self._chunk_quality_score(row.chunk_text)
+            final_score = (
+                0.48 * lexical_score
+                + 0.22 * overlap_score
+                + 0.20 * anchor_score
+                + quality_score
+            )
             merged[row.chunk_id] = replace(
                 row,
                 lexical_score=lexical_score,
-                final_score=0.65 * lexical_score + 0.20 * overlap_score,
+                final_score=final_score,
             )
 
         vector_rows: list[ChunkSearchResult] = []
@@ -219,6 +260,7 @@ class RAGService:
                 vector_rows = self._search_vector_candidates(
                     query_embedding=query_embedding,
                     query_terms=query_terms,
+                    anchor_terms=anchor_terms,
                     date_from=date_from,
                     date_to=date_to,
                     limit=limit,
@@ -228,48 +270,50 @@ class RAGService:
         for rank, row in enumerate(vector_rows, start=1):
             vector_rank_bonus = 1.0 / rank
             overlap_score = self._token_overlap_score(query_terms, row.article_title, row.chunk_text)
+            anchor_score = self._anchor_overlap_score(anchor_terms, row.article_title, row.chunk_text)
             existing = merged.get(row.chunk_id)
             if existing is None:
-                final_score = 0.45 * row.vector_score + 0.10 * vector_rank_bonus + 0.25 * overlap_score
+                final_score = (
+                    0.45 * row.vector_score
+                    + 0.12 * vector_rank_bonus
+                    + 0.18 * overlap_score
+                    + 0.18 * anchor_score
+                    + self._chunk_quality_score(row.chunk_text)
+                )
                 merged[row.chunk_id] = replace(row, final_score=final_score)
                 continue
 
-            combined_vector = max(existing.vector_score, row.vector_score)
-            combined_final = (
-                existing.final_score
-                + 0.25 * row.vector_score
-                + 0.05 * vector_rank_bonus
-                + 0.10 * overlap_score
-            )
             merged[row.chunk_id] = replace(
                 existing,
-                vector_score=combined_vector,
-                final_score=combined_final,
+                vector_score=max(existing.vector_score, row.vector_score),
+                final_score=(
+                    existing.final_score
+                    + 0.22 * row.vector_score
+                    + 0.05 * vector_rank_bonus
+                    + 0.06 * anchor_score
+                    + 0.03 * overlap_score
+                ),
             )
 
         ranked = sorted(
             merged.values(),
-            key=lambda item: (item.final_score, item.lexical_score, item.vector_score, item.published_at),
+            key=lambda item: (
+                item.final_score,
+                item.rerank_score,
+                item.lexical_score,
+                item.vector_score,
+                item.published_at,
+            ),
             reverse=True,
         )
-        if not ranked:
-            return []
-
-        if lexical_hit:
-            ranked = [item for item in ranked if item.lexical_score > 0 or item.final_score >= 0.25]
-        else:
-            ranked = [item for item in ranked if item.vector_score >= 0.60 or item.final_score >= 0.40]
-
-        top = ranked[:limit]
-        if not self._has_topical_match(query_terms, top):
-            return []
-        return top
+        return ranked[:limit]
 
     def _search_vector_candidates(
         self,
         *,
         query_embedding: list[float],
         query_terms: list[dict[str, str]],
+        anchor_terms: set[str],
         date_from: str,
         date_to: str,
         limit: int,
@@ -290,7 +334,13 @@ class RAGService:
             if similarity <= 0:
                 continue
             overlap_score = self._token_overlap_score(query_terms, candidate.article_title, candidate.chunk_text)
-            final_score = 0.55 * similarity + 0.25 * overlap_score
+            anchor_score = self._anchor_overlap_score(anchor_terms, candidate.article_title, candidate.chunk_text)
+            final_score = (
+                0.54 * similarity
+                + 0.16 * overlap_score
+                + 0.16 * anchor_score
+                + self._chunk_quality_score(candidate.chunk_text)
+            )
             scored.append(
                 ChunkSearchResult(
                     chunk_id=candidate.chunk_id,
@@ -317,25 +367,25 @@ class RAGService:
         if not candidates:
             return []
 
-        initial = candidates[: max(limit, self.rerank_limit)]
+        initial = candidates[:limit]
         if self.llm_client is None:
-            return initial[:limit]
+            return initial
 
         prompt_lines = [
-            f"Запрос: {query}",
+            f"Query: {query}",
             "",
-            'Выбери самые релевантные фрагменты. Верни JSON вида {"ranked_chunk_ids": [id1, id2]}',
-            "В список включай только действительно релевантные запросу фрагменты.",
+            'Return JSON only in the form {"ranked_chunk_ids": [id1, id2, ...]}.',
+            "Rank the chunks from most useful to least useful for answering the query.",
+            "Prefer direct topical relevance, factual density, and non-boilerplate text.",
             "",
-            "Кандидаты:",
+            "Chunks:",
         ]
         for item in initial:
             prompt_lines.append(f"- id={item.chunk_id} | title={item.article_title} | text={item.chunk_text}")
         prompt = "\n".join(prompt_lines)
         system_prompt = (
-            "Ты делаешь reranking новостных фрагментов для RAG. "
-            "Отвечай только JSON-объектом. Не добавляй пояснений. "
-            "Не включай нерелевантные фрагменты."
+            "You are reranking retrieved news chunks for a Russian-language RAG system. "
+            "Return valid JSON only. Do not invent chunk ids."
         )
         try:
             payload = self.llm_client.generate_json(
@@ -345,11 +395,11 @@ class RAGService:
                 max_tokens=180,
             )
         except Exception:
-            return initial[:limit]
+            return initial
 
         ranked_ids = payload.get("ranked_chunk_ids", [])
         if not isinstance(ranked_ids, list):
-            return initial[:limit]
+            return initial
 
         by_id = {item.chunk_id: item for item in initial}
         reranked: list[ChunkSearchResult] = []
@@ -367,88 +417,87 @@ class RAGService:
                 replace(
                     item,
                     rerank_score=1.0 / index,
-                    final_score=item.final_score + (0.35 / index),
+                    final_score=item.final_score + (0.30 / index),
                 )
             )
 
         if not reranked:
-            return initial[:limit]
+            return initial
 
         for item in initial:
-            if item.chunk_id in used:
-                continue
-            reranked.append(item)
+            if item.chunk_id not in used:
+                reranked.append(item)
         reranked.sort(
             key=lambda item: (item.rerank_score, item.final_score, item.lexical_score, item.vector_score),
             reverse=True,
         )
         return reranked[:limit]
 
-    def _filter_topical_chunks(self, query: str, chunks: list[ChunkSearchResult]) -> list[ChunkSearchResult]:
+    def _filter_topical_chunks(
+        self,
+        query_terms: list[dict[str, str]],
+        chunks: list[ChunkSearchResult],
+    ) -> list[ChunkSearchResult]:
         if not chunks:
-            self._last_summary_debug = {
-                "llm_used": False,
-                "fallback_used": True,
-                "debug_message": "No chunks found for summary generation.",
-            }
-            self._last_summary_debug = {
-                "llm_used": False,
-                "fallback_used": True,
-                "debug_message": "No chunks found for summary generation.",
-            }
             return []
 
-        query_terms = self._extract_query_terms(query)
-        if not query_terms:
-            return chunks
-
+        anchor_terms = self._anchor_terms(query_terms)
         strict_matches: list[ChunkSearchResult] = []
-        strong_semantic_matches: list[ChunkSearchResult] = []
+        semantic_matches: list[ChunkSearchResult] = []
         fallback_matches: list[ChunkSearchResult] = []
+        strict_ids: set[int] = set()
+        anchor_present = False
 
         for chunk in chunks:
+            quality_score = self._chunk_quality_score(chunk.chunk_text)
+            if quality_score <= -0.45:
+                continue
+
             overlap = self._token_overlap_score(query_terms, chunk.article_title, chunk.chunk_text)
-            if overlap > 0:
+            anchor_score = self._anchor_overlap_score(anchor_terms, chunk.article_title, chunk.chunk_text)
+            if anchor_score > 0:
+                anchor_present = True
+
+            if overlap >= 0.50 or anchor_score >= 0.50:
                 strict_matches.append(chunk)
+                strict_ids.add(chunk.chunk_id)
                 continue
-            if self._is_strict_topic_query(query_terms) and chunk.vector_score < 0.88:
+            if anchor_score > 0 and chunk.vector_score >= 0.72:
+                semantic_matches.append(chunk)
                 continue
-            if chunk.vector_score >= 0.88:
-                strong_semantic_matches.append(chunk)
+            if overlap > 0 and chunk.vector_score >= 0.66:
+                semantic_matches.append(chunk)
                 continue
-            if chunk.final_score >= 0.78:
+            if chunk.vector_score >= 0.82 and chunk.final_score >= 0.50:
+                semantic_matches.append(chunk)
+                continue
+            if chunk.final_score >= 0.62 and not self._is_low_value_chunk(chunk.chunk_text):
                 fallback_matches.append(chunk)
 
         if strict_matches:
-            merged: list[ChunkSearchResult] = []
-            seen: set[int] = set()
-            for chunk in strict_matches + strong_semantic_matches:
-                if chunk.chunk_id in seen:
-                    continue
-                seen.add(chunk.chunk_id)
-                merged.append(chunk)
-            return merged
-        if strong_semantic_matches:
-            return strong_semantic_matches
+            return strict_matches + [item for item in semantic_matches if item.chunk_id not in strict_ids]
+        if anchor_terms and anchor_present:
+            return semantic_matches
+        if semantic_matches:
+            return semantic_matches
         return fallback_matches or chunks
 
     def _generate_summary(self, query: str, chunks: list[ChunkSearchResult]) -> str:
         if not chunks:
             return "По выбранному запросу релевантные фрагменты не найдены."
-        if self.llm_client is None:
-            self._last_summary_debug = {
-                "llm_used": False,
-                "fallback_used": True,
-                "debug_message": "LLM client is not configured.",
-            }
-            return self._fallback_summary(chunks)
 
-        prompt = self._build_prompt(query, chunks)
+        useful_chunks = [chunk for chunk in chunks if not self._is_low_value_chunk(chunk.chunk_text)]
+        if not useful_chunks:
+            useful_chunks = chunks
+
+        if self.llm_client is None:
+            return self._fallback_summary(useful_chunks)
+
+        prompt = self._build_prompt(query, useful_chunks[:5])
         system_prompt = (
-            "Ты помогаешь с новостным RAG. Отвечай только на русском языке. "
-            "Используй только факты из переданных фрагментов. "
-            "Не придумывай детали, не добавляй факты вне контекста и не смешивай нерелевантные сюжеты. "
-            "Если данных мало, скажи об этом кратко."
+            "You summarize Russian news retrieval results. "
+            "Answer in Russian. Use only the supplied fragments. "
+            "Do not invent facts or add outside context."
         )
         try:
             text = self.llm_client.generate_text(
@@ -457,27 +506,12 @@ class RAGService:
                 temperature=0.1,
                 max_tokens=260,
             )
-        except Exception as exc:
-            self._last_summary_debug = {
-                "llm_used": False,
-                "fallback_used": True,
-                "debug_message": f"LLM request failed: {exc}",
-            }
-            return self._fallback_summary(chunks)
+        except Exception:
+            return self._fallback_summary(useful_chunks)
 
         cleaned = text.strip()
-        if not cleaned or CHINESE_RE.search(cleaned):
-            self._last_summary_debug = {
-                "llm_used": False,
-                "fallback_used": True,
-                "debug_message": "LLM returned empty or invalid summary text.",
-            }
-            return self._fallback_summary(chunks)
-        self._last_summary_debug = {
-            "llm_used": True,
-            "fallback_used": False,
-            "debug_message": None,
-        }
+        if not cleaned or not CYRILLIC_RE.search(cleaned):
+            return self._fallback_summary(useful_chunks)
         return cleaned
 
     @staticmethod
@@ -487,10 +521,10 @@ class RAGService:
             "",
             "Релевантные фрагменты:",
         ]
-        for index, chunk in enumerate(chunks[:5], start=1):
+        for index, chunk in enumerate(chunks, start=1):
             lines.append(f"{index}. [{chunk.article_title}] {chunk.chunk_text}")
         lines.append("")
-        lines.append("Сформулируй короткую выжимку на 1-2 абзаца только по этим фрагментам.")
+        lines.append("Сделай короткую сводку на русском языке в 1-2 абзаца.")
         return "\n".join(lines)
 
     @staticmethod
@@ -508,18 +542,20 @@ class RAGService:
         *,
         max_articles: int,
     ) -> list[Article]:
-        article_ids: list[int] = []
-        seen: set[int] = set()
+        article_scores: dict[int, float] = {}
         for chunk in chunks:
-            if chunk.article_id in seen:
-                continue
-            seen.add(chunk.article_id)
-            article_ids.append(chunk.article_id)
-            if len(article_ids) >= max_articles:
-                break
+            article_scores.setdefault(chunk.article_id, 0.0)
+            article_scores[chunk.article_id] += max(chunk.final_score, 0.0) + (0.10 / (chunk.chunk_index + 1))
+
+        ranked_article_ids = [
+            article_id
+            for article_id, _score in sorted(article_scores.items(), key=lambda item: item[1], reverse=True)[
+                :max_articles
+            ]
+        ]
 
         articles: list[Article] = []
-        for article_id in article_ids:
+        for article_id in ranked_article_ids:
             article = self.article_repository.get_article_by_id(article_id)
             if article is not None:
                 articles.append(article)
@@ -533,12 +569,11 @@ class RAGService:
             if raw in STOPWORDS:
                 continue
             normalized = self._normalize_token(raw)
-            if normalized in STOPWORDS:
+            if normalized in STOPWORDS or len(normalized) < 2:
                 continue
-            key = f"{raw}:{normalized}"
-            if key in seen:
+            if normalized in seen:
                 continue
-            seen.add(key)
+            seen.add(normalized)
             terms.append({"raw": raw, "normalized": normalized})
         return terms
 
@@ -565,19 +600,61 @@ class RAGService:
                 matches += 1
         return matches / len(query_terms)
 
-    def _has_topical_match(self, query_terms: list[dict[str, str]], chunks: list[ChunkSearchResult]) -> bool:
-        if not chunks or not query_terms:
-            return False
-        for chunk in chunks[:3]:
-            if self._token_overlap_score(query_terms, chunk.article_title, chunk.chunk_text) > 0:
-                return True
-            if chunk.vector_score >= 0.88:
-                return True
-        return False
+    def _anchor_terms(self, query_terms: list[dict[str, str]]) -> set[str]:
+        meaningful = [
+            term["normalized"]
+            for term in query_terms
+            if len(term["normalized"]) >= 5 and term["normalized"] not in BROAD_TERMS
+        ]
+        if meaningful:
+            return set(meaningful)
+        if len(query_terms) >= 2:
+            ordered = sorted((term["normalized"] for term in query_terms), key=len, reverse=True)
+            return set(ordered[:1])
+        return set()
 
-    @staticmethod
-    def _is_strict_topic_query(query_terms: list[dict[str, str]]) -> bool:
-        return len(query_terms) <= 2 and all(len(term["normalized"]) >= 4 for term in query_terms)
+    def _anchor_overlap_score(self, anchor_terms: set[str], title: str, chunk_text: str) -> float:
+        if not anchor_terms:
+            return 0.0
+        haystack_terms = self._extract_query_terms(f"{title} {chunk_text}")
+        haystack_values = {term["raw"] for term in haystack_terms} | {term["normalized"] for term in haystack_terms}
+        matches = sum(1 for term in anchor_terms if term in haystack_values)
+        return matches / len(anchor_terms)
+
+    def _diversify_chunks(self, chunks: list[ChunkSearchResult], *, max_per_article: int) -> list[ChunkSearchResult]:
+        diversified: list[ChunkSearchResult] = []
+        per_article: dict[int, int] = {}
+        for chunk in sorted(
+            chunks,
+            key=lambda item: (item.final_score, item.rerank_score, item.lexical_score, item.vector_score),
+            reverse=True,
+        ):
+            count = per_article.get(chunk.article_id, 0)
+            if count >= max_per_article:
+                continue
+            per_article[chunk.article_id] = count + 1
+            diversified.append(chunk)
+        return diversified
+
+    def _chunk_quality_score(self, chunk_text: str) -> float:
+        text = chunk_text.strip()
+        if not text:
+            return -0.80
+        lowered = text.lower()
+        if any(pattern.search(lowered) for pattern in NOISE_PATTERNS):
+            return -0.65
+
+        token_count = len(TOKEN_RE.findall(lowered))
+        if token_count < 8:
+            return -0.28
+        if token_count < 18:
+            return -0.08
+        if token_count > 260:
+            return -0.05
+        return 0.06
+
+    def _is_low_value_chunk(self, chunk_text: str) -> bool:
+        return self._chunk_quality_score(chunk_text) <= -0.45
 
     @staticmethod
     def _normalize_token(token: str) -> str:

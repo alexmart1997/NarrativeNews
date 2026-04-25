@@ -53,6 +53,10 @@ class MockEmbeddingClient(BaseEmbeddingClient):
             return [1.0, 0.0]
         if "украин" in lowered or "киев" in lowered:
             return [0.0, 1.0]
+        if "инфляц" in lowered or "цен" in lowered or "подорож" in lowered:
+            return [0.8, 0.2]
+        if "рубл" in lowered or "курс" in lowered or "экономик" in lowered:
+            return [0.3, 0.7]
         return [0.2, 0.2]
 
 
@@ -143,7 +147,7 @@ class RetrievalTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(result.chunks), 1)
         self.assertEqual(result.articles[0].id, matching_article.id)
-        self.assertIn("инфляция", result.chunks[0].chunk_text.lower())
+        self.assertIn("инфляц", result.chunks[0].chunk_text.lower())
 
     def test_hybrid_retrieval_can_find_semantic_match_via_embeddings(self) -> None:
         target_article = self._create_article(
@@ -153,7 +157,7 @@ class RetrievalTests(unittest.TestCase):
         )
         self._create_article(
             title="Новости Украины",
-            body_text="Киев сообщил о новых переговорах и развитии ситуации на фронте.",
+            body_text="Киев обсуждает новый пакет помощи и ситуацию на фронте.",
             published_at="2026-04-21T11:00:00",
         )
 
@@ -175,8 +179,8 @@ class RetrievalTests(unittest.TestCase):
             published_at="2026-04-21T10:00:00",
         )
         self._create_article(
-            title="ДТП в Москве",
-            body_text="Водитель каршеринга сбил двух женщин в Москве во время побега от полиции.",
+            title="Доп в Москве",
+            body_text="Водитель каршеринга был задержан в Москве после побега от полиции.",
             published_at="2026-04-21T11:00:00",
         )
 
@@ -190,7 +194,12 @@ class RetrievalTests(unittest.TestCase):
 
         self.assertEqual(len(result.source_articles), 1)
         self.assertEqual(result.source_articles[0].id, target_article.id)
-        self.assertTrue(all("иран" in chunk.chunk_text.lower() or "иран" in chunk.article_title.lower() for chunk in (result.top_chunks or [])))
+        self.assertTrue(
+            all(
+                "иран" in chunk.chunk_text.lower() or "иран" in chunk.article_title.lower()
+                for chunk in (result.top_chunks or [])
+            )
+        )
 
     def test_natural_language_query_is_normalized_to_topic_terms(self) -> None:
         target_article = self._create_article(
@@ -200,12 +209,12 @@ class RetrievalTests(unittest.TestCase):
         )
         self._create_article(
             title="Новости Москвы",
-            body_text="В Москве произошло ДТП с участием каршеринга и полицейской погони.",
+            body_text="В Москве произошло ДТП с участием каршеринга и полиции.",
             published_at="2026-04-21T11:00:00",
         )
 
         result = self.rag_service.answer(
-            query="Что с Ираном",
+            query="что с Ираном",
             date_from="2026-04-01T00:00:00",
             date_to="2026-04-30T23:59:59",
             limit=5,
@@ -218,12 +227,12 @@ class RetrievalTests(unittest.TestCase):
     def test_rag_answer_uses_reranked_chunks_and_returns_articles(self) -> None:
         first_article = self._create_article(
             title="Статья 1",
-            body_text="Иран сообщил о новых переговорах и уточнил позицию по сделке.",
+            body_text="Иран сообщил о новых переговорах по сделке и обозначил позицию по безопасности.",
             published_at="2026-04-20T10:00:00",
         )
         second_article = self._create_article(
             title="Статья 2",
-            body_text="Тегеран также сделал отдельное заявление о региональной безопасности.",
+            body_text="Иран также сделал отдельное заявление о региональной безопасности и дипломатии.",
             published_at="2026-04-21T10:00:00",
         )
 
@@ -250,10 +259,10 @@ class RetrievalTests(unittest.TestCase):
         self.assertTrue(any("ranked_chunk_ids" in str(call["prompt"]) for call in self.mock_llm.calls))
 
     def test_rag_answer_falls_back_when_llm_returns_non_russian_text(self) -> None:
-        self.mock_llm.summary_text = "您好！这里没有相关信息。"
+        self.mock_llm.summary_text = "plain english output only"
         self._create_article(
             title="Статья 1",
-            body_text="Иран сообщил о новых переговорах и уточнил позицию по сделке.",
+            body_text="Иран сообщил о новых переговорах по сделке и обозначил позицию по безопасности.",
             published_at="2026-04-20T10:00:00",
         )
 
@@ -276,7 +285,7 @@ class RetrievalTests(unittest.TestCase):
         )
         self._create_article(
             title="Инфляция в Ленте",
-            body_text="Инфляция ускорилась, Лента публикует похожий обзор и комментарии.",
+            body_text="Инфляция ускорилась, Лента публикует похожий обзор по экономике.",
             published_at="2026-04-22T11:00:00",
             source_domain="lenta.ru",
             source_name="Лента.ру",
@@ -312,6 +321,72 @@ class RetrievalTests(unittest.TestCase):
 
         self.assertEqual(len(result.source_articles), 1)
         self.assertEqual(result.source_articles[0].id, article.id)
+
+    def test_rag_prefers_anchor_topic_for_broad_economic_query(self) -> None:
+        inflation_article = self._create_article(
+            title="Инфляция в России ускорилась в марте",
+            body_text=(
+                "Инфляция в России ускорилась в марте, а рост потребительских цен затронул продукты, "
+                "услуги и тарифы. Аналитики связывают подорожание товаров с ослаблением рубля и "
+                "издержками производителей."
+            ),
+            published_at="2026-04-22T10:00:00",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+        )
+        self._create_article(
+            title="Для российской экономики назвали выгодный курс рубля",
+            body_text=(
+                "Эксперт заявил, что курс рубля влияет на доходы бюджета, устойчивость экспортеров "
+                "и состояние российской экономики. Материал посвящен курсу валют и финансовым рынкам."
+            ),
+            published_at="2026-04-22T11:00:00",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+        )
+
+        result = self.rag_service.answer(
+            query="инфляция в россии",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+            source_domains=["ria.ru"],
+        )
+
+        self.assertGreaterEqual(len(result.source_articles), 1)
+        self.assertEqual(result.source_articles[0].id, inflation_article.id)
+
+    def test_rag_penalizes_boilerplate_chunks_even_when_title_matches(self) -> None:
+        useful_article = self._create_article(
+            title="Иран сделал заявление по ядерной сделке",
+            body_text=(
+                "Иран сделал заявление по ядерной сделке и сообщил о готовности продолжать переговоры "
+                "по региональной безопасности. В материале приводятся детали переговорного процесса."
+            ),
+            published_at="2026-04-22T10:00:00",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+        )
+        self._create_article(
+            title="Иран сделал заявление",
+            body_text="Ваш браузер не поддерживает данный формат видео.",
+            published_at="2026-04-22T11:00:00",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+        )
+
+        result = self.rag_service.answer(
+            query="иран сделал заявление",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+            source_domains=["ria.ru"],
+            include_debug_chunks=True,
+        )
+
+        self.assertGreaterEqual(len(result.source_articles), 1)
+        self.assertEqual(result.source_articles[0].id, useful_article.id)
+        self.assertTrue(all("Ваш браузер не поддерживает" not in chunk.chunk_text for chunk in (result.top_chunks or [])))
 
 
 if __name__ == "__main__":
