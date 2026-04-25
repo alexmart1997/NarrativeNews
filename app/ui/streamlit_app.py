@@ -56,15 +56,21 @@ def render_rag_tab(services) -> None:
                 source_domains=source_options[selected_source_label],
             )
         except Exception as exc:
-            st.error(f"Ошибка RAG-запроса: {exc}")
+            st.error(f"Ошибка RAG-поиска: {exc}")
             return
 
         if not result.source_articles and not result.top_chunks:
-            st.info("За выбранный период релевантных данных не найдено.")
+            st.info("За выбранный период релевантные данные не найдены.")
             return
 
         st.markdown("### Сводка")
         st.write(result.summary_text or "Сводка недоступна.")
+
+        with st.expander("Диагностика RAG"):
+            st.write(f"LLM used: {'yes' if result.llm_used else 'no'}")
+            st.write(f"Fallback used: {'yes' if result.fallback_used else 'no'}")
+            if result.debug_message:
+                st.code(result.debug_message)
 
         st.markdown("### Исходные статьи")
         if result.source_articles:
@@ -117,6 +123,7 @@ def render_narratives_tab(services) -> None:
             return
 
         narrative_results = result["results"]
+        debug_by_type = result.get("debug_by_type", {})
         if not narrative_results:
             if run_mode == "По теме":
                 st.info("За выбранную тему и период нарративы не найдены.")
@@ -142,6 +149,16 @@ def render_narratives_tab(services) -> None:
             st.write(item.formulation)
             st.caption(item.explanation or "")
             st.caption(f"strength_score={item.strength_score}")
+
+            debug_info = debug_by_type.get(narrative_type)
+            with st.expander(f"Диагностика: {type_titles.get(narrative_type, narrative_type)}"):
+                if debug_info:
+                    st.write(f"LLM used: {'yes' if debug_info.get('llm_used') else 'no'}")
+                    st.write(f"Fallback used: {'yes' if debug_info.get('fallback_used') else 'no'}")
+                    if debug_info.get("debug_message"):
+                        st.code(str(debug_info["debug_message"]))
+                else:
+                    st.info("Диагностика недоступна.")
 
             articles = services.narrative_result_repository.list_articles_for_result(item.id)
             if articles:

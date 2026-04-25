@@ -169,10 +169,14 @@ class RAGService:
         chunks = self.search_chunks(query, date_from, date_to, limit, source_domains=source_domains)
         source_articles = self._select_source_articles(chunks, max_articles=5)
         summary_text = self._generate_summary(query, chunks)
+        rag_debug = getattr(self, "_last_summary_debug", {})
         return RAGAnswerResult(
             summary_text=summary_text,
             source_articles=source_articles[:5],
             top_chunks=chunks if include_debug_chunks else None,
+            llm_used=bool(rag_debug.get("llm_used", False)),
+            fallback_used=bool(rag_debug.get("fallback_used", True)),
+            debug_message=rag_debug.get("debug_message"),
         )
 
     def _hybrid_retrieve(
@@ -386,6 +390,16 @@ class RAGService:
 
     def _filter_topical_chunks(self, query: str, chunks: list[ChunkSearchResult]) -> list[ChunkSearchResult]:
         if not chunks:
+            self._last_summary_debug = {
+                "llm_used": False,
+                "fallback_used": True,
+                "debug_message": "No chunks found for summary generation.",
+            }
+            self._last_summary_debug = {
+                "llm_used": False,
+                "fallback_used": True,
+                "debug_message": "No chunks found for summary generation.",
+            }
             return []
 
         query_terms = self._extract_query_terms(query)
@@ -426,6 +440,11 @@ class RAGService:
         if not chunks:
             return "По выбранному запросу релевантные фрагменты не найдены."
         if self.llm_client is None:
+            self._last_summary_debug = {
+                "llm_used": False,
+                "fallback_used": True,
+                "debug_message": "LLM client is not configured.",
+            }
             return self._fallback_summary(chunks)
 
         prompt = self._build_prompt(query, chunks)
@@ -442,12 +461,27 @@ class RAGService:
                 temperature=0.1,
                 max_tokens=260,
             )
-        except Exception:
+        except Exception as exc:
+            self._last_summary_debug = {
+                "llm_used": False,
+                "fallback_used": True,
+                "debug_message": f"LLM request failed: {exc}",
+            }
             return self._fallback_summary(chunks)
 
         cleaned = text.strip()
         if not cleaned or CHINESE_RE.search(cleaned):
+            self._last_summary_debug = {
+                "llm_used": False,
+                "fallback_used": True,
+                "debug_message": "LLM returned empty or invalid summary text.",
+            }
             return self._fallback_summary(chunks)
+        self._last_summary_debug = {
+            "llm_used": True,
+            "fallback_used": False,
+            "debug_message": None,
+        }
         return cleaned
 
     @staticmethod

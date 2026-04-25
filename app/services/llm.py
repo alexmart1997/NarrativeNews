@@ -72,6 +72,9 @@ class NarrativeLabel:
     title: str
     formulation: str
     explanation: str
+    llm_used: bool = False
+    fallback_used: bool = True
+    debug_message: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

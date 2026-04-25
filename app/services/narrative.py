@@ -402,6 +402,7 @@ class NarrativeRunService:
         self.narrative_scorer = narrative_scorer or NarrativeScorer()
         self.claim_grouper = claim_grouper or ClaimGrouper(self.narrative_scorer, embedding_client=embedding_client)
         self.narrative_labeling_service = narrative_labeling_service or NarrativeLabelingService()
+        self._last_debug_by_type: dict[str, dict[str, object]] = {}
 
     def run(
         self,
@@ -459,6 +460,7 @@ class NarrativeRunService:
             "clusters": self.claim_cluster_repository.list_by_run_id(run.id),
             "results": self.narrative_result_repository.list_by_run_id(run.id),
             "persisted_results": persisted_results,
+            "debug_by_type": self._last_debug_by_type,
         }
 
     def _filter_claims_for_topic(self, topic_text: str, articles: list[Article]) -> list[Claim]:
@@ -568,12 +570,23 @@ class NarrativeRunService:
                 top_per_type[cluster.claim_type] = (cluster_id, cluster)
 
         created_results = []
+        debug_by_type: dict[str, dict[str, object]] = {}
         for narrative_type in ("predictive", "causal", "meta"):
             selected = top_per_type.get(narrative_type)
             if selected is None:
+                debug_by_type[narrative_type] = {
+                    "llm_used": False,
+                    "fallback_used": True,
+                    "debug_message": "No narrative cluster selected for this type.",
+                }
                 continue
             _cluster_id, cluster = selected
             label = self.narrative_labeling_service.label_cluster(cluster)
+            debug_by_type[narrative_type] = {
+                "llm_used": label.llm_used,
+                "fallback_used": label.fallback_used,
+                "debug_message": label.debug_message,
+            }
             result = self.narrative_result_repository.create(
                 NarrativeResultCreate(
                     run_id=run_id,
@@ -597,6 +610,7 @@ class NarrativeRunService:
                 ]
             )
             created_results.append(result)
+        self._last_debug_by_type = debug_by_type
         return created_results
 
     def _select_support_articles(self, cluster: GroupedClaimCluster, narrative_type: str) -> list[Article]:

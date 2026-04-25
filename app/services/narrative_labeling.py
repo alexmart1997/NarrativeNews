@@ -10,7 +10,7 @@ class NarrativeLabelingService:
 
     def label_cluster(self, cluster: GroupedClaimCluster) -> NarrativeLabel:
         if self.llm_client is None:
-            return self._fallback_label(cluster)
+            return self._fallback_label(cluster, "LLM client is not configured.")
 
         representative_claims = [
             (claim.normalized_claim_text or claim.claim_text).strip()
@@ -33,16 +33,18 @@ class NarrativeLabelingService:
                 temperature=0.15,
                 max_tokens=260,
             )
-        except Exception:
-            return self._fallback_label(cluster)
+        except Exception as exc:
+            return self._fallback_label(cluster, f"LLM request failed: {exc}")
 
         label = NarrativeLabel(
             title=str(payload.get("title", "")).strip(),
             formulation=str(payload.get("formulation", "")).strip(),
             explanation=str(payload.get("explanation", "")).strip(),
+            llm_used=True,
+            fallback_used=False,
         )
         if not label.title or not label.formulation or not label.explanation:
-            return self._fallback_label(cluster)
+            return self._fallback_label(cluster, "LLM returned incomplete label fields.")
         return label
 
     @staticmethod
@@ -63,7 +65,10 @@ class NarrativeLabelingService:
         return "\n".join(lines)
 
     @staticmethod
-    def _fallback_label(cluster: GroupedClaimCluster) -> NarrativeLabel:
+    def _fallback_label(
+        cluster: GroupedClaimCluster,
+        debug_message: str | None = None,
+    ) -> NarrativeLabel:
         formulation = cluster.cluster_summary.strip() or cluster.representative_text.strip()
         title_base = cluster.representative_text.strip() or formulation
         explanation = (
@@ -74,4 +79,7 @@ class NarrativeLabelingService:
             title=" ".join(title_base.split()[:8]).strip() or cluster.claim_type,
             formulation=formulation,
             explanation=explanation,
+            llm_used=False,
+            fallback_used=True,
+            debug_message=debug_message,
         )

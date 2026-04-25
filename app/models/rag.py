@@ -66,3 +66,6 @@ class RAGAnswerResult:
     summary_text: str
     source_articles: list[Article]
     top_chunks: list[ChunkSearchResult] | None = None
+    llm_used: bool = False
+    fallback_used: bool = True
+    debug_message: str | None = None
