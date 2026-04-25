@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from app.models.entities import Article, ArticleCreate
-from app.repositories.base import BaseRepository, bool_to_int
+from app.repositories.base import BaseRepository, bool_to_int, compact_datetime_sql, normalize_datetime_bound
 
 
 class ArticleRepository(BaseRepository):
@@ -70,24 +70,28 @@ class ArticleRepository(BaseRepository):
         return [self._row_to_article(row) for row in rows]
 
     def list_articles_by_date_range(self, date_from: str, date_to: str) -> list[Article]:
+        date_from = normalize_datetime_bound(date_from) or date_from
+        date_to = normalize_datetime_bound(date_to) or date_to
         rows = self._fetch_all(
-            """
+            f"""
             SELECT *
             FROM articles
-            WHERE published_at BETWEEN ? AND ?
-            ORDER BY published_at ASC, id ASC
+            WHERE {compact_datetime_sql("published_at")} BETWEEN ? AND ?
+            ORDER BY {compact_datetime_sql("published_at")} ASC, id ASC
             """,
             (date_from, date_to),
         )
         return [self._row_to_article(row) for row in rows]
 
     def list_canonical_articles_by_date_range(self, date_from: str, date_to: str) -> list[Article]:
+        date_from = normalize_datetime_bound(date_from) or date_from
+        date_to = normalize_datetime_bound(date_to) or date_to
         rows = self._fetch_all(
-            """
+            f"""
             SELECT *
             FROM articles
-            WHERE published_at BETWEEN ? AND ? AND is_canonical = 1
-            ORDER BY published_at ASC, id ASC
+            WHERE {compact_datetime_sql("published_at")} BETWEEN ? AND ? AND is_canonical = 1
+            ORDER BY {compact_datetime_sql("published_at")} ASC, id ASC
             """,
             (date_from, date_to),
         )
@@ -99,8 +103,10 @@ class ArticleRepository(BaseRepository):
         date_to: str,
         source_domains: list[str] | None = None,
     ) -> list[Article]:
+        date_from = normalize_datetime_bound(date_from) or date_from
+        date_to = normalize_datetime_bound(date_to) or date_to
         clauses = [
-            "published_at BETWEEN ? AND ?",
+            f"{compact_datetime_sql('published_at')} BETWEEN ? AND ?",
             "is_canonical = 1",
         ]
         params: list[object] = [date_from, date_to]
@@ -115,7 +121,7 @@ class ArticleRepository(BaseRepository):
             SELECT *
             FROM articles
             WHERE {' AND '.join(clauses)}
-            ORDER BY published_at ASC, id ASC
+            ORDER BY {compact_datetime_sql("published_at")} ASC, id ASC
             """,
             tuple(params),
         )
@@ -134,7 +140,9 @@ class ArticleRepository(BaseRepository):
         ]
         params: list[object] = []
         if date_from is not None and date_to is not None:
-            clauses.append("a.published_at BETWEEN ? AND ?")
+            date_from = normalize_datetime_bound(date_from) or date_from
+            date_to = normalize_datetime_bound(date_to) or date_to
+            clauses.append(f"{compact_datetime_sql('a.published_at')} BETWEEN ? AND ?")
             params.extend([date_from, date_to])
 
         params.append(limit)
@@ -143,7 +151,7 @@ class ArticleRepository(BaseRepository):
             SELECT a.*
             FROM articles a
             WHERE {' AND '.join(clauses)}
-            ORDER BY a.published_at ASC, a.id ASC
+            ORDER BY {compact_datetime_sql("a.published_at")} ASC, a.id ASC
             LIMIT ?
             """,
             tuple(params),

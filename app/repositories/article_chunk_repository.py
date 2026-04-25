@@ -11,7 +11,7 @@ from app.models import (
     ChunkSearchResult,
     EmbeddedChunkCandidate,
 )
-from app.repositories.base import BaseRepository
+from app.repositories.base import BaseRepository, compact_datetime_sql, normalize_datetime_bound
 
 
 TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]{2,}")
@@ -120,6 +120,8 @@ class ArticleChunkRepository(BaseRepository):
         limit: int = 20,
         source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
+        date_from = normalize_datetime_bound(date_from) or date_from
+        date_to = normalize_datetime_bound(date_to) or date_to
         tokens = self._tokenize(query)
         if not tokens:
             return []
@@ -134,7 +136,7 @@ class ArticleChunkRepository(BaseRepository):
         params.append(limit)
         try:
             rows = self._fetch_all(
-                """
+                f"""
                 SELECT
                     ac.id AS chunk_id,
                     ac.article_id AS article_id,
@@ -149,11 +151,11 @@ class ArticleChunkRepository(BaseRepository):
                 INNER JOIN sources s ON s.id = a.source_id
                 WHERE article_chunks_fts MATCH ?
                   AND a.is_canonical = 1
-                  AND a.published_at BETWEEN ? AND ?
+                  AND {compact_datetime_sql("a.published_at")} BETWEEN ? AND ?
                 """
                 + source_clause
-                + """
-                ORDER BY match_score ASC, a.published_at DESC, ac.article_id ASC, ac.chunk_index ASC
+                + f"""
+                ORDER BY match_score ASC, {compact_datetime_sql("a.published_at")} DESC, ac.article_id ASC, ac.chunk_index ASC
                 LIMIT ?
                 """,
                 tuple(params),
@@ -170,6 +172,8 @@ class ArticleChunkRepository(BaseRepository):
         date_to: str,
         source_domains: list[str] | None = None,
     ) -> list[EmbeddedChunkCandidate]:
+        date_from = normalize_datetime_bound(date_from) or date_from
+        date_to = normalize_datetime_bound(date_to) or date_to
         source_clause = ""
         params: list[object] = [model_name, date_from, date_to]
         if source_domains:
@@ -177,7 +181,7 @@ class ArticleChunkRepository(BaseRepository):
             source_clause = f" AND s.domain IN ({placeholders})"
             params.extend(source_domains)
         rows = self._fetch_all(
-            """
+            f"""
             SELECT
                 ac.id AS chunk_id,
                 ac.article_id AS article_id,
@@ -192,11 +196,11 @@ class ArticleChunkRepository(BaseRepository):
             INNER JOIN sources s ON s.id = a.source_id
             WHERE ace.model_name = ?
               AND a.is_canonical = 1
-              AND a.published_at BETWEEN ? AND ?
+              AND {compact_datetime_sql("a.published_at")} BETWEEN ? AND ?
             """
             + source_clause
-            + """
-            ORDER BY a.published_at DESC, ac.article_id ASC, ac.chunk_index ASC
+            + f"""
+            ORDER BY {compact_datetime_sql("a.published_at")} DESC, ac.article_id ASC, ac.chunk_index ASC
             """,
             tuple(params),
         )
@@ -234,6 +238,8 @@ class ArticleChunkRepository(BaseRepository):
         limit: int,
         source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
+        date_from = normalize_datetime_bound(date_from) or date_from
+        date_to = normalize_datetime_bound(date_to) or date_to
         tokens = self._tokenize(query)
         if not tokens:
             return []
@@ -271,10 +277,10 @@ class ArticleChunkRepository(BaseRepository):
             INNER JOIN articles a ON a.id = ac.article_id
             INNER JOIN sources s ON s.id = a.source_id
             WHERE a.is_canonical = 1
-              AND a.published_at BETWEEN ? AND ?
+              AND {compact_datetime_sql("a.published_at")} BETWEEN ? AND ?
               {source_clause}
               AND ({' OR '.join(where_parts)})
-            ORDER BY match_score DESC, a.published_at DESC, ac.article_id ASC, ac.chunk_index ASC
+            ORDER BY match_score DESC, {compact_datetime_sql("a.published_at")} DESC, ac.article_id ASC, ac.chunk_index ASC
             LIMIT ?
             """,
             tuple(score_params + [date_from, date_to] + source_params + params + [limit]),

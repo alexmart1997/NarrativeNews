@@ -6,6 +6,7 @@ import sqlite3
 
 from app.db.connection import create_connection
 from app.db.schema import create_schema
+from app.repositories.base import compact_datetime_sql, normalize_datetime_bound
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +30,8 @@ class DeploySnapshotService:
         keep_embeddings: bool = True,
         clear_narratives: bool = False,
     ) -> DeploySnapshotResult:
+        date_from = normalize_datetime_bound(date_from) or date_from
+        date_to = normalize_datetime_bound(date_to) or date_to
         source_database_path = source_database_path.resolve()
         output_database_path = output_database_path.resolve()
         if source_database_path == output_database_path:
@@ -71,11 +74,11 @@ class DeploySnapshotService:
         date_to: str,
     ) -> None:
         rows = source_connection.execute(
-            """
+            f"""
             SELECT DISTINCT s.*
             FROM sources s
             INNER JOIN articles a ON a.source_id = s.id
-            WHERE a.published_at BETWEEN ? AND ?
+            WHERE {compact_datetime_sql("a.published_at")} BETWEEN ? AND ?
             ORDER BY s.id ASC
             """,
             (date_from, date_to),
@@ -111,10 +114,10 @@ class DeploySnapshotService:
         date_to: str,
     ) -> None:
         rows = source_connection.execute(
-            """
+            f"""
             SELECT *
             FROM articles
-            WHERE published_at BETWEEN ? AND ?
+            WHERE {compact_datetime_sql("published_at")} BETWEEN ? AND ?
             ORDER BY id ASC
             """,
             (date_from, date_to),
@@ -213,7 +216,7 @@ class DeploySnapshotService:
     @staticmethod
     def _copy_narrative_tables(connection: sqlite3.Connection, *, date_from: str, date_to: str) -> None:
         connection.execute(
-            """
+            f"""
             INSERT INTO narrative_runs (
                 id, topic_text, date_from, date_to, run_status, articles_selected_count,
                 claims_selected_count, created_at, finished_at
@@ -221,7 +224,7 @@ class DeploySnapshotService:
             SELECT id, topic_text, date_from, date_to, run_status, articles_selected_count,
                    claims_selected_count, created_at, finished_at
             FROM source_db.narrative_runs
-            WHERE date_from >= ? AND date_to <= ?
+            WHERE {compact_datetime_sql("date_from")} >= ? AND {compact_datetime_sql("date_to")} <= ?
             """,
             (date_from, date_to),
         )

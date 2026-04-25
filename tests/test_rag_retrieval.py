@@ -293,6 +293,26 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(len(result.source_articles), 1)
         self.assertEqual(result.source_articles[0].id, ria_article.id)
 
+    def test_rag_supports_iso_date_filters_for_compact_published_at(self) -> None:
+        article = self._create_article(
+            title="Иран и переговоры",
+            body_text="Иран сделал новое заявление по переговорам и региональной безопасности.",
+            published_at="20260421T1015",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+        )
+
+        result = self.rag_service.answer(
+            query="иран",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+            source_domains=["ria.ru"],
+        )
+
+        self.assertEqual(len(result.source_articles), 1)
+        self.assertEqual(result.source_articles[0].id, article.id)
+
 
 if __name__ == "__main__":
     unittest.main()

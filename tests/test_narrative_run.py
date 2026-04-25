@@ -367,5 +367,29 @@ class NarrativeRunTests(unittest.TestCase):
         self.assertEqual(len(result["articles"]), 1)
         self.assertTrue(all("ria.ru" in article.url for article in result["articles"]))
 
+    def test_global_narrative_run_supports_iso_date_filters_for_compact_published_at(self) -> None:
+        self._seed_article_with_claims(
+            title="РИА экономика",
+            body_text="Инфляция и спрос в РИА.",
+            published_at="20260414T1010",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+            claims=[
+                ("Инфляция вырастет к лету.", "инфляция вырастет к лету", "predictive"),
+                ("Рост цен вызвал пересмотр спроса.", "рост цен вызвал пересмотр спроса", "causal"),
+                ("ЦБ сообщил об ускорении инфляции до 9 процентов.", "цб сообщил об ускорении инфляции до 9 процентов", "meta"),
+            ],
+        )
+
+        result = self.service.run(
+            topic_text=None,
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            source_domains=["ria.ru"],
+        )
+
+        self.assertEqual(result["run"].articles_selected_count, 1)
+        self.assertEqual({item.narrative_type for item in result["results"]}, {"predictive", "causal", "meta"})
+
 if __name__ == "__main__":
     unittest.main()

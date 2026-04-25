@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Any
 
@@ -23,3 +24,42 @@ class BaseRepository:
     def _fetch_all(self, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         cursor = self.connection.execute(query, params)
         return list(cursor.fetchall())
+
+
+COMPACT_DATETIME_RE = re.compile(r"^\d{8}T\d{4}$")
+
+
+def normalize_datetime_bound(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return stripped
+    if COMPACT_DATETIME_RE.match(stripped):
+        return stripped
+    if "T" not in stripped:
+        digits = re.sub(r"\D", "", stripped)
+        if len(digits) == 8:
+            return f"{digits}T0000"
+        return stripped
+
+    date_part, time_part = stripped.split("T", 1)
+    date_digits = re.sub(r"\D", "", date_part)
+    time_digits = re.sub(r"\D", "", time_part)
+    if len(date_digits) != 8:
+        return stripped
+    if len(time_digits) < 4:
+        time_digits = (time_digits + "0000")[:4]
+    else:
+        time_digits = time_digits[:4]
+    return f"{date_digits}T{time_digits}"
+
+
+def compact_datetime_sql(column_name: str) -> str:
+    return (
+        f"CASE "
+        f"WHEN instr({column_name}, '-') > 0 "
+        f"THEN replace(replace(substr({column_name}, 1, 16), '-', ''), ':', '') "
+        f"ELSE {column_name} "
+        f"END"
+    )
