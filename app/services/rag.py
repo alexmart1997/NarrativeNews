@@ -169,14 +169,10 @@ class RAGService:
         chunks = self.search_chunks(query, date_from, date_to, limit, source_domains=source_domains)
         source_articles = self._select_source_articles(chunks, max_articles=5)
         summary_text = self._generate_summary(query, chunks)
-        rag_debug = getattr(self, "_last_summary_debug", {})
         return RAGAnswerResult(
             summary_text=summary_text,
             source_articles=source_articles[:5],
             top_chunks=chunks if include_debug_chunks else None,
-            llm_used=bool(rag_debug.get("llm_used", False)),
-            fallback_used=bool(rag_debug.get("fallback_used", True)),
-            debug_message=rag_debug.get("debug_message"),
         )
 
     def _hybrid_retrieve(

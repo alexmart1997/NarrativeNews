@@ -78,84 +78,6 @@ CREATE TABLE IF NOT EXISTS article_chunk_embeddings (
     UNIQUE (chunk_id, model_name)
 );
 
-CREATE TABLE IF NOT EXISTS claims (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    article_id INTEGER NOT NULL,
-    claim_text TEXT NOT NULL,
-    normalized_claim_text TEXT,
-    claim_type TEXT NOT NULL,
-    extraction_confidence REAL CHECK (
-        extraction_confidence IS NULL OR (extraction_confidence >= 0 AND extraction_confidence <= 1)
-    ),
-    classification_confidence REAL CHECK (
-        classification_confidence IS NULL OR (classification_confidence >= 0 AND classification_confidence <= 1)
-    ),
-    source_sentence TEXT,
-    source_paragraph_index INTEGER CHECK (source_paragraph_index IS NULL OR source_paragraph_index >= 0),
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS narrative_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    topic_text TEXT NOT NULL,
-    date_from TEXT NOT NULL,
-    date_to TEXT NOT NULL,
-    run_status TEXT NOT NULL,
-    articles_selected_count INTEGER NOT NULL DEFAULT 0 CHECK (articles_selected_count >= 0),
-    claims_selected_count INTEGER NOT NULL DEFAULT 0 CHECK (claims_selected_count >= 0),
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    finished_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS claim_clusters (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id INTEGER NOT NULL,
-    claim_type TEXT NOT NULL,
-    cluster_label TEXT NOT NULL,
-    cluster_summary TEXT,
-    cluster_score REAL CHECK (cluster_score IS NULL OR (cluster_score >= 0 AND cluster_score <= 1)),
-    claim_count INTEGER NOT NULL DEFAULT 0 CHECK (claim_count >= 0),
-    article_count INTEGER NOT NULL DEFAULT 0 CHECK (article_count >= 0),
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (run_id) REFERENCES narrative_runs(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS claim_cluster_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cluster_id INTEGER NOT NULL,
-    claim_id INTEGER NOT NULL,
-    membership_score REAL CHECK (membership_score IS NULL OR (membership_score >= 0 AND membership_score <= 1)),
-    is_representative INTEGER NOT NULL DEFAULT 0 CHECK (is_representative IN (0, 1)),
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (cluster_id) REFERENCES claim_clusters(id) ON DELETE CASCADE,
-    FOREIGN KEY (claim_id) REFERENCES claims(id) ON DELETE CASCADE,
-    UNIQUE (cluster_id, claim_id)
-);
-
-CREATE TABLE IF NOT EXISTS narrative_results (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id INTEGER NOT NULL,
-    narrative_type TEXT NOT NULL,
-    title TEXT NOT NULL,
-    formulation TEXT NOT NULL,
-    explanation TEXT,
-    strength_score REAL CHECK (strength_score IS NULL OR (strength_score >= 0 AND strength_score <= 1)),
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (run_id) REFERENCES narrative_runs(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS narrative_result_articles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    narrative_result_id INTEGER NOT NULL,
-    article_id INTEGER NOT NULL,
-    rank INTEGER NOT NULL CHECK (rank >= 1),
-    selection_reason TEXT,
-    FOREIGN KEY (narrative_result_id) REFERENCES narrative_results(id) ON DELETE CASCADE,
-    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE,
-    UNIQUE (narrative_result_id, article_id)
-);
-
 CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at);
 CREATE INDEX IF NOT EXISTS idx_articles_source_id ON articles(source_id);
 CREATE INDEX IF NOT EXISTS idx_articles_is_canonical ON articles(is_canonical);
@@ -164,11 +86,6 @@ CREATE INDEX IF NOT EXISTS idx_articles_duplicate_group_id ON articles(duplicate
 CREATE INDEX IF NOT EXISTS idx_article_chunks_article_id ON article_chunks(article_id);
 CREATE INDEX IF NOT EXISTS idx_article_chunk_embeddings_chunk_id ON article_chunk_embeddings(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_article_chunk_embeddings_model_name ON article_chunk_embeddings(model_name);
-CREATE INDEX IF NOT EXISTS idx_claims_article_id ON claims(article_id);
-CREATE INDEX IF NOT EXISTS idx_claims_claim_type ON claims(claim_type);
-CREATE INDEX IF NOT EXISTS idx_narrative_runs_topic_text ON narrative_runs(topic_text);
-CREATE INDEX IF NOT EXISTS idx_claim_clusters_run_id ON claim_clusters(run_id);
-CREATE INDEX IF NOT EXISTS idx_claim_clusters_claim_type ON claim_clusters(claim_type);
 
 CREATE TRIGGER IF NOT EXISTS trg_article_chunks_fts_insert
 AFTER INSERT ON article_chunks

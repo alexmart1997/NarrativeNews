@@ -13,10 +13,9 @@ from app.ingestion.pipeline.validation import (
 )
 from app.ingestion.sources import SourceConfig
 from app.models import ArticleCreate, SourceCreate
-from app.repositories import ArticleChunkRepository, ArticleRepository, ClaimRepository, SourceRepository
+from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
 from app.services import (
     ArticleNormalizer,
-    ClaimExtractor,
     ChunkingService,
     DeduplicationService,
     EmbeddingIndexService,
@@ -45,34 +44,28 @@ class IngestionPipeline:
         source_repository: SourceRepository,
         article_repository: ArticleRepository,
         article_chunk_repository: ArticleChunkRepository | None = None,
-        claim_repository: ClaimRepository | None = None,
         rss_discovery_service: RSSDiscoveryService | None = None,
         section_discovery_service: SectionPageDiscoveryService | None = None,
         article_normalizer: ArticleNormalizer | None = None,
         deduplication_service: DeduplicationService | None = None,
         chunking_service: ChunkingService | None = None,
-        claim_extractor: ClaimExtractor | None = None,
         embedding_index_service: EmbeddingIndexService | None = None,
         min_body_length: int = 120,
         enable_chunking: bool = True,
-        enable_claim_extraction: bool = True,
         enable_embeddings: bool = True,
     ) -> None:
         self.fetcher = fetcher
         self.source_repository = source_repository
         self.article_repository = article_repository
         self.article_chunk_repository = article_chunk_repository
-        self.claim_repository = claim_repository
         self.rss_discovery_service = rss_discovery_service or RSSDiscoveryService(fetcher)
         self.section_discovery_service = section_discovery_service or SectionPageDiscoveryService(fetcher)
         self.article_normalizer = article_normalizer or ArticleNormalizer()
         self.deduplication_service = deduplication_service or DeduplicationService(article_repository)
         self.chunking_service = chunking_service or ChunkingService()
-        self.claim_extractor = claim_extractor or ClaimExtractor()
         self.embedding_index_service = embedding_index_service
         self.min_body_length = min_body_length
         self.enable_chunking = enable_chunking
-        self.enable_claim_extraction = enable_claim_extraction
         self.enable_embeddings = enable_embeddings
 
     def run_once(self, source_config: SourceConfig, *, limit: int | None = None) -> IngestionRunResult:
@@ -162,14 +155,6 @@ class IngestionPipeline:
                             and created_chunks
                         ):
                             self.embedding_index_service.index_chunks(created_chunks)
-                if (
-                    self.enable_claim_extraction
-                    and self.claim_repository is not None
-                    and saved_article.is_canonical
-                ):
-                    claims = self.claim_extractor.extract(saved_article)
-                    if claims:
-                        self.claim_repository.create_many(claims)
                 saved_articles += 1
             except Exception:
                 failed_urls += 1

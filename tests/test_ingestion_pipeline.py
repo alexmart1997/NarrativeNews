@@ -12,7 +12,7 @@ from app.ingestion.fetcher import FetchResult
 from app.ingestion.pipeline import IngestionPipeline
 from app.ingestion.sources import SourceConfig
 from app.models import ArticleCreate, SourceCreate
-from app.repositories import ArticleChunkRepository, ArticleRepository, ClaimRepository, SourceRepository
+from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
 
 
 class MockFetcher:
@@ -37,7 +37,6 @@ class IngestionPipelineTests(unittest.TestCase):
         self.source_repo = SourceRepository(self.connection)
         self.article_repo = ArticleRepository(self.connection)
         self.chunk_repo = ArticleChunkRepository(self.connection)
-        self.claim_repo = ClaimRepository(self.connection)
 
     def tearDown(self) -> None:
         self.connection.close()
@@ -66,7 +65,6 @@ class IngestionPipelineTests(unittest.TestCase):
             source_repository=self.source_repo,
             article_repository=self.article_repo,
             article_chunk_repository=self.chunk_repo,
-            claim_repository=self.claim_repo,
             min_body_length=80,
         )
         source_config = SourceConfig(
@@ -81,7 +79,6 @@ class IngestionPipelineTests(unittest.TestCase):
         result = pipeline.run_once(source_config, limit=5)
         saved_article = self.article_repo.get_article_by_url("https://lenta.ru/news/2026/04/23/example")
         saved_chunks = self.chunk_repo.list_by_article_id(saved_article.id if saved_article else -1)
-        saved_claims = self.claim_repo.list_by_article_id(saved_article.id if saved_article else -1)
 
         self.assertEqual(result.discovered_urls, 1)
         self.assertEqual(result.saved_articles, 1)
@@ -91,7 +88,6 @@ class IngestionPipelineTests(unittest.TestCase):
         self.assertTrue(saved_article.is_canonical)
         self.assertIsNone(saved_article.duplicate_group_id)
         self.assertGreaterEqual(len(saved_chunks), 1)
-        self.assertGreaterEqual(len(saved_claims), 1)
 
     def test_pipeline_ignores_channel_link_and_root_url(self) -> None:
         rss_url = "https://lenta.ru/rss"
@@ -114,7 +110,6 @@ class IngestionPipelineTests(unittest.TestCase):
             source_repository=self.source_repo,
             article_repository=self.article_repo,
             article_chunk_repository=self.chunk_repo,
-            claim_repository=self.claim_repo,
             min_body_length=80,
         )
         source_config = SourceConfig(
@@ -170,7 +165,6 @@ class IngestionPipelineTests(unittest.TestCase):
             source_repository=self.source_repo,
             article_repository=self.article_repo,
             article_chunk_repository=self.chunk_repo,
-            claim_repository=self.claim_repo,
             min_body_length=80,
         )
         source_config = SourceConfig(
@@ -232,7 +226,6 @@ class IngestionPipelineTests(unittest.TestCase):
             source_repository=self.source_repo,
             article_repository=self.article_repo,
             article_chunk_repository=self.chunk_repo,
-            claim_repository=self.claim_repo,
             min_body_length=80,
         )
         source_config = SourceConfig(

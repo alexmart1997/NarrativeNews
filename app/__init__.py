@@ -1,1 +1,1 @@
-"""NarrativeNews application package."""
+"""News RAG application package."""

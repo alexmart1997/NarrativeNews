@@ -29,12 +29,8 @@ class SchemaTests(unittest.TestCase):
             "articles",
             "article_duplicates",
             "article_chunks",
-            "claims",
-            "narrative_runs",
-            "claim_clusters",
-            "claim_cluster_items",
-            "narrative_results",
-            "narrative_result_articles",
+            "article_chunks_fts",
+            "article_chunk_embeddings",
         }
         rows = self.connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
@@ -48,8 +44,8 @@ class SchemaTests(unittest.TestCase):
         ).fetchall()
         index_names = {row["name"] for row in rows}
         self.assertIn("idx_articles_published_at", index_names)
-        self.assertIn("idx_claims_article_id", index_names)
-        self.assertIn("idx_claim_clusters_run_id", index_names)
+        self.assertIn("idx_article_chunks_article_id", index_names)
+        self.assertIn("idx_article_chunk_embeddings_chunk_id", index_names)
 
     def test_connection_can_be_used_from_another_thread(self) -> None:
         results: queue.Queue[object] = queue.Queue()

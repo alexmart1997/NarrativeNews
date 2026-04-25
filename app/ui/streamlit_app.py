@@ -31,8 +31,8 @@ def get_source_options(services) -> dict[str, list[str] | None]:
     return options
 
 
-def render_rag_tab(services) -> None:
-    st.subheader("Поиск по новостям (RAG)")
+def render_rag(services) -> None:
+    st.subheader("Поиск по новостям")
     query = st.text_input("Запрос", key="rag_query")
     source_options = get_source_options(services)
     selected_source_label = st.selectbox("Источник", list(source_options.keys()), key="rag_source")
@@ -66,12 +66,6 @@ def render_rag_tab(services) -> None:
         st.markdown("### Сводка")
         st.write(result.summary_text or "Сводка недоступна.")
 
-        with st.expander("Диагностика RAG"):
-            st.write(f"LLM used: {'yes' if result.llm_used else 'no'}")
-            st.write(f"Fallback used: {'yes' if result.fallback_used else 'no'}")
-            if result.debug_message:
-                st.code(result.debug_message)
-
         st.markdown("### Исходные статьи")
         if result.source_articles:
             for article in result.source_articles:
@@ -88,91 +82,10 @@ def render_rag_tab(services) -> None:
                 st.info("Фрагменты не найдены.")
 
 
-def render_narratives_tab(services) -> None:
-    st.subheader("Анализ нарративов")
-    run_mode = st.radio(
-        "Режим",
-        options=("По теме", "По всему корпусу"),
-        horizontal=True,
-        key="narrative_mode",
-    )
-    topic_text = ""
-    if run_mode == "По теме":
-        topic_text = st.text_input("Тема", key="narrative_topic")
-    source_options = get_source_options(services)
-    selected_source_label = st.selectbox("Источник", list(source_options.keys()), key="narrative_source")
-    col1, col2 = st.columns(2)
-    with col1:
-        date_from = st.date_input("Дата с", value=date(2026, 4, 1), key="narrative_date_from")
-    with col2:
-        date_to = st.date_input("Дата по", value=date.today(), key="narrative_date_to")
-
-    if st.button("Запустить нарративы", key="narrative_run"):
-        if run_mode == "По теме" and not topic_text.strip():
-            st.warning("Введите тему.")
-            return
-        try:
-            result = services.narrative_run_service.run(
-                topic_text=topic_text.strip() if run_mode == "По теме" else None,
-                date_from=f"{date_from.isoformat()}T00:00:00",
-                date_to=f"{date_to.isoformat()}T23:59:59",
-                source_domains=source_options[selected_source_label],
-            )
-        except Exception as exc:
-            st.error(f"Ошибка запуска narratives: {exc}")
-            return
-
-        narrative_results = result["results"]
-        debug_by_type = result.get("debug_by_type", {})
-        if not narrative_results:
-            if run_mode == "По теме":
-                st.info("За выбранную тему и период нарративы не найдены.")
-            else:
-                st.info("За выбранный период нарративы не найдены.")
-            return
-
-        st.markdown("### Результаты")
-        by_type = {item.narrative_type: item for item in narrative_results}
-        for narrative_type in ("predictive", "causal", "meta"):
-            item = by_type.get(narrative_type)
-            type_titles = {
-                "predictive": "Прогнозный",
-                "causal": "Причинно-следственный",
-                "meta": "Мета-нарратив",
-            }
-            st.markdown(f"## {type_titles.get(narrative_type, narrative_type)}")
-            if item is None:
-                st.info("Нарратив этого типа не найден.")
-                continue
-
-            st.markdown(f"**{item.title}**")
-            st.write(item.formulation)
-            st.caption(item.explanation or "")
-            st.caption(f"strength_score={item.strength_score}")
-
-            debug_info = debug_by_type.get(narrative_type)
-            with st.expander(f"Диагностика: {type_titles.get(narrative_type, narrative_type)}"):
-                if debug_info:
-                    st.write(f"LLM used: {'yes' if debug_info.get('llm_used') else 'no'}")
-                    st.write(f"Fallback used: {'yes' if debug_info.get('fallback_used') else 'no'}")
-                    if debug_info.get("debug_message"):
-                        st.code(str(debug_info["debug_message"]))
-                else:
-                    st.info("Диагностика недоступна.")
-
-            articles = services.narrative_result_repository.list_articles_for_result(item.id)
-            if articles:
-                st.markdown("Поддерживающие статьи")
-                for article in articles[:5]:
-                    st.markdown(f"- [{article.title}]({article.url})")
-            else:
-                st.info("Поддерживающие статьи не сохранены.")
-
-
 def main() -> None:
-    st.set_page_config(page_title="NarrativeNews", layout="wide")
-    st.title("NarrativeNews")
-    st.caption("Локальный интерфейс для RAG-поиска и анализа нарративов.")
+    st.set_page_config(page_title="News RAG", layout="wide")
+    st.title("News RAG")
+    st.caption("Локальный интерфейс для поиска по новостному корпусу.")
 
     try:
         _connection, services, settings = get_connection_and_services()
@@ -182,14 +95,8 @@ def main() -> None:
 
     st.sidebar.markdown("### База данных")
     st.sidebar.code(str(settings.database_path))
-    st.sidebar.markdown("### LLM")
-    st.sidebar.code(f"{settings.llm_provider} | {settings.llm_model_name}")
 
-    rag_tab, narratives_tab = st.tabs(["RAG", "Нарративы"])
-    with rag_tab:
-        render_rag_tab(services)
-    with narratives_tab:
-        render_narratives_tab(services)
+    render_rag(services)
 
 
 if __name__ == "__main__":

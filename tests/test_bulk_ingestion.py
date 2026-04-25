@@ -12,7 +12,7 @@ from app.ingestion.discovery import ArchiveDiscoveryService
 from app.ingestion.fetcher import FetchResult
 from app.ingestion.pipeline import BulkIngestionService, IngestionPipeline
 from app.ingestion.sources import SourceConfig
-from app.repositories import ArticleChunkRepository, ArticleRepository, ClaimRepository, SourceRepository
+from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
 
 
 class MockFetcher:
@@ -37,7 +37,6 @@ class BulkIngestionTests(unittest.TestCase):
         self.source_repo = SourceRepository(self.connection)
         self.article_repo = ArticleRepository(self.connection)
         self.chunk_repo = ArticleChunkRepository(self.connection)
-        self.claim_repo = ClaimRepository(self.connection)
 
     def tearDown(self) -> None:
         self.connection.close()
@@ -82,9 +81,7 @@ class BulkIngestionTests(unittest.TestCase):
             source_repository=self.source_repo,
             article_repository=self.article_repo,
             article_chunk_repository=self.chunk_repo,
-            claim_repository=self.claim_repo,
             min_body_length=80,
-            enable_claim_extraction=False,
         )
         service = BulkIngestionService(
             pipeline=pipeline,

@@ -42,38 +42,3 @@ class Article(ArticleCreate):
     id: int = 0
     created_at: str = ""
     updated_at: str = ""
-
-
-@dataclass(slots=True)
-class ClaimCreate:
-    article_id: int
-    claim_text: str
-    normalized_claim_text: str | None
-    claim_type: str
-    extraction_confidence: float | None = None
-    classification_confidence: float | None = None
-    source_sentence: str | None = None
-    source_paragraph_index: int | None = None
-
-
-@dataclass(slots=True)
-class Claim(ClaimCreate):
-    id: int = 0
-    created_at: str = ""
-
-
-@dataclass(slots=True)
-class NarrativeRunCreate:
-    topic_text: str
-    date_from: str
-    date_to: str
-    run_status: str
-    articles_selected_count: int = 0
-    claims_selected_count: int = 0
-    finished_at: str | None = None
-
-
-@dataclass(slots=True)
-class NarrativeRun(NarrativeRunCreate):
-    id: int = 0
-    created_at: str = ""

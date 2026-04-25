@@ -1,8 +1,5 @@
-from app.services.claim_batch import ClaimBatchResult, ClaimBatchService
-from app.services.claim_extraction import ClaimExtractor, SimpleHeuristicClaimLLMClient
 from app.services.chunking import ChunkingConfig, ChunkingService
 from app.services.deduplication import DeduplicationResult, DeduplicationService
-from app.services.deploy_snapshot import DeploySnapshotResult, DeploySnapshotService
 from app.services.embeddings import EmbeddingIndexService
 from app.services.llm import (
     BaseEmbeddingClient,
@@ -13,15 +10,9 @@ from app.services.llm import (
     LocalLlamaEmbeddingConfig,
     LocalLlamaClient,
     LocalLlamaConfig,
-    NarrativeLabel,
-    OpenAICompatibleClient,
-    OpenAICompatibleConfig,
     create_embedding_client,
     create_llm_client,
-    SimpleExtractiveLLMClient,
 )
-from app.services.narrative import ClaimGrouper, NarrativeRunService, NarrativeScorer
-from app.services.narrative_labeling import NarrativeLabelingService
 from app.services.normalization import ArticleNormalizer, NormalizedArticle
 from app.services.rag import RAGSearchResult, RAGService
 
@@ -29,16 +20,10 @@ __all__ = [
     "ArticleNormalizer",
     "BaseEmbeddingClient",
     "BaseLLMClient",
-    "ClaimBatchResult",
-    "ClaimBatchService",
-    "ClaimExtractor",
-    "ClaimGrouper",
     "ChunkingConfig",
     "ChunkingService",
     "DeduplicationResult",
     "DeduplicationService",
-    "DeploySnapshotResult",
-    "DeploySnapshotService",
     "EmbeddingError",
     "EmbeddingIndexService",
     "LLMError",
@@ -46,17 +31,9 @@ __all__ = [
     "LocalLlamaEmbeddingConfig",
     "LocalLlamaClient",
     "LocalLlamaConfig",
-    "NarrativeLabel",
-    "NarrativeLabelingService",
-    "NarrativeRunService",
-    "NarrativeScorer",
     "NormalizedArticle",
-    "OpenAICompatibleClient",
-    "OpenAICompatibleConfig",
     "RAGSearchResult",
     "RAGService",
-    "SimpleHeuristicClaimLLMClient",
-    "SimpleExtractiveLLMClient",
     "create_embedding_client",
     "create_llm_client",
 ]
