@@ -200,7 +200,7 @@ class BERTopicTopicDiscoveryBackend(TopicDiscoveryBackend):
         if not texts:
             return []
 
-        embeddings = self.embedding_backend.embed_texts(texts)
+        embeddings = _to_embedding_matrix(self.embedding_backend.embed_texts(texts))
         umap_model = (
             UMAP(n_neighbors=15, n_components=5, min_dist=0.0, metric="cosine")
             if self.config.topic_reduce_dimensionality
@@ -793,6 +793,14 @@ def _coerce_optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _to_embedding_matrix(vectors: Sequence[Sequence[float]]) -> object:
+    import numpy as np
+
+    if not vectors:
+        return np.empty((0, 0), dtype=float)
+    return np.asarray(vectors, dtype=float)
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:

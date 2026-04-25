@@ -22,6 +22,7 @@ from app.services.narrative_intelligence import (
     HybridNarrativeClassifier,
     NarrativeFrameTextFormatter,
     RollingWindowNarrativeDynamicsAnalyzer,
+    _to_embedding_matrix,
 )
 
 
@@ -262,6 +263,12 @@ class NarrativeIntelligenceTests(unittest.TestCase):
         self.assertEqual(series[0].cluster_id, "cluster-1")
         self.assertEqual(len(series[0].points), 2)
         self.assertEqual(series[0].total_articles, 2)
+
+    def test_embedding_matrix_helper_returns_numpy_array(self) -> None:
+        matrix = _to_embedding_matrix([[1.0, 2.0], [3.0, 4.0]])
+
+        self.assertEqual(matrix.shape, (2, 2))
+        self.assertEqual(matrix.dtype.kind, "f")
 
 
 if __name__ == "__main__":
