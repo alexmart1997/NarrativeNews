@@ -132,8 +132,15 @@ class RAGService:
         date_from: str,
         date_to: str,
         limit: int = 10,
+        source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
-        candidates = self._hybrid_retrieve(query, date_from, date_to, limit=max(limit, self.hybrid_limit))
+        candidates = self._hybrid_retrieve(
+            query,
+            date_from,
+            date_to,
+            limit=max(limit, self.hybrid_limit),
+            source_domains=source_domains,
+        )
         reranked = self._rerank(query, candidates, limit=min(limit, self.rerank_limit))
         filtered = self._filter_topical_chunks(query, reranked)
         return filtered[:limit]
@@ -144,8 +151,9 @@ class RAGService:
         date_from: str,
         date_to: str,
         limit: int = 10,
+        source_domains: list[str] | None = None,
     ) -> RAGSearchResult:
-        chunks = self.search_chunks(query, date_from, date_to, limit)
+        chunks = self.search_chunks(query, date_from, date_to, limit, source_domains=source_domains)
         articles = self._select_source_articles(chunks, max_articles=5)
         return RAGSearchResult(chunks=chunks, articles=articles)
 
@@ -156,8 +164,9 @@ class RAGService:
         date_to: str,
         limit: int = 10,
         include_debug_chunks: bool = False,
+        source_domains: list[str] | None = None,
     ) -> RAGAnswerResult:
-        chunks = self.search_chunks(query, date_from, date_to, limit)
+        chunks = self.search_chunks(query, date_from, date_to, limit, source_domains=source_domains)
         source_articles = self._select_source_articles(chunks, max_articles=5)
         summary_text = self._generate_summary(query, chunks)
         return RAGAnswerResult(
@@ -173,6 +182,7 @@ class RAGService:
         date_to: str,
         *,
         limit: int,
+        source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
         query_terms = self._extract_query_terms(query)
         if not query_terms:
@@ -184,6 +194,7 @@ class RAGService:
             date_from,
             date_to,
             limit=limit,
+            source_domains=source_domains,
         )
 
         merged: dict[int, ChunkSearchResult] = {}
@@ -211,6 +222,7 @@ class RAGService:
                     date_from=date_from,
                     date_to=date_to,
                     limit=limit,
+                    source_domains=source_domains,
                 )
 
         for rank, row in enumerate(vector_rows, start=1):
@@ -261,6 +273,7 @@ class RAGService:
         date_from: str,
         date_to: str,
         limit: int,
+        source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
         if self.embedding_client is None:
             return []
@@ -269,6 +282,7 @@ class RAGService:
             model_name=self.embedding_client.model_name,
             date_from=date_from,
             date_to=date_to,
+            source_domains=source_domains,
         )
         scored: list[ChunkSearchResult] = []
         for candidate in candidates:

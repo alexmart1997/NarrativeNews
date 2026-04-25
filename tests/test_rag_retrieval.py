@@ -83,21 +83,30 @@ class RetrievalTests(unittest.TestCase):
         self.connection.close()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def _create_article(self, *, title: str, body_text: str, published_at: str, is_canonical: bool = True):
-        source = self.source_repo.get_by_domain("example.ru")
+    def _create_article(
+        self,
+        *,
+        title: str,
+        body_text: str,
+        published_at: str,
+        is_canonical: bool = True,
+        source_domain: str = "example.ru",
+        source_name: str = "Example",
+    ):
+        source = self.source_repo.get_by_domain(source_domain)
         if source is None:
             source = self.source_repo.create(
                 SourceCreate(
-                    name="Example",
-                    domain="example.ru",
-                    base_url="https://example.ru",
+                    name=source_name,
+                    domain=source_domain,
+                    base_url=f"https://{source_domain}",
                     source_type="news_site",
                 )
             )
         article = self.article_repo.create_article(
             ArticleCreate(
                 source_id=source.id,
-                url=f"https://example.ru/articles/{uuid.uuid4().hex}",
+                url=f"https://{source_domain}/articles/{uuid.uuid4().hex}",
                 title=title,
                 subtitle=None,
                 body_text=body_text,
@@ -256,6 +265,33 @@ class RetrievalTests(unittest.TestCase):
         )
 
         self.assertIn("Иран", result.summary_text)
+
+    def test_rag_can_filter_by_source_domain(self) -> None:
+        ria_article = self._create_article(
+            title="Инфляция в РИА",
+            body_text="Инфляция ускорилась, РИА приводит подробности по экономике и ценам.",
+            published_at="2026-04-22T10:00:00",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+        )
+        self._create_article(
+            title="Инфляция в Ленте",
+            body_text="Инфляция ускорилась, Лента публикует похожий обзор и комментарии.",
+            published_at="2026-04-22T11:00:00",
+            source_domain="lenta.ru",
+            source_name="Лента.ру",
+        )
+
+        result = self.rag_service.answer(
+            query="инфляция",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+            source_domains=["ria.ru"],
+        )
+
+        self.assertEqual(len(result.source_articles), 1)
+        self.assertEqual(result.source_articles[0].id, ria_article.id)
 
 
 if __name__ == "__main__":

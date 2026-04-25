@@ -119,21 +119,23 @@ class NarrativeRunTests(unittest.TestCase):
         body_text: str,
         published_at: str,
         claims: list[tuple[str, str, str]],
+        source_domain: str = "example.ru",
+        source_name: str = "Example",
     ):
-        source = self.source_repo.get_by_domain("example.ru")
+        source = self.source_repo.get_by_domain(source_domain)
         if source is None:
             source = self.source_repo.create(
                 SourceCreate(
-                    name="Example",
-                    domain="example.ru",
-                    base_url="https://example.ru",
+                    name=source_name,
+                    domain=source_domain,
+                    base_url=f"https://{source_domain}",
                     source_type="news_site",
                 )
             )
         article = self.article_repo.create_article(
             ArticleCreate(
                 source_id=source.id,
-                url=f"https://example.ru/articles/{uuid.uuid4().hex}",
+                url=f"https://{source_domain}/articles/{uuid.uuid4().hex}",
                 title=title,
                 subtitle=None,
                 body_text=body_text,
@@ -253,6 +255,117 @@ class NarrativeRunTests(unittest.TestCase):
         self.assertEqual({item.narrative_type for item in saved_results}, {"predictive", "causal", "meta"})
         predictive = next(item for item in saved_results if item.narrative_type == "predictive")
         self.assertEqual(predictive.title, "predictive label")
+
+    def test_global_narrative_run_works_without_topic(self) -> None:
+        self._seed_article_with_claims(
+            title="Экономика",
+            body_text="В корпусе есть прогнозы и причины.",
+            published_at="2026-04-10T10:00:00",
+            claims=[
+                ("Инфляция вырастет к лету.", "инфляция вырастет к лету", "predictive"),
+                ("Рост цен вызвал пересмотр спроса.", "рост цен вызвал пересмотр спроса", "causal"),
+                ("ЦБ сообщил об ускорении инфляции.", "цб сообщил об ускорении инфляции", "meta"),
+            ],
+        )
+        self._seed_article_with_claims(
+            title="Рынок",
+            body_text="В корпусе есть еще один поддерживающий набор claims.",
+            published_at="2026-04-11T10:00:00",
+            claims=[
+                ("Рост цен ожидается летом.", "рост цен ожидается летом", "predictive"),
+                ("Спрос стал причиной пересмотра цен.", "спрос стал причиной пересмотра цен", "causal"),
+            ],
+        )
+
+        result = self.service.run(
+            topic_text=None,
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+        )
+
+        run = result["run"]
+        narrative_results = result["results"]
+
+        self.assertEqual(run.topic_text, "")
+        self.assertEqual(run.run_status, "completed")
+        self.assertEqual(run.articles_selected_count, 2)
+        self.assertEqual(run.claims_selected_count, 5)
+        self.assertEqual({item.narrative_type for item in narrative_results}, {"predictive", "causal", "meta"})
+
+    def test_global_mode_suppresses_banal_meta_narratives(self) -> None:
+        fallback_service = NarrativeRunService(
+            article_repository=self.article_repo,
+            claim_repository=self.claim_repo,
+            narrative_run_repository=self.run_repo,
+            claim_cluster_repository=self.cluster_repo,
+            narrative_result_repository=self.result_repo,
+            claim_grouper=ClaimGrouper(embedding_client=self.embedding_client),
+            narrative_scorer=NarrativeScorer(),
+            narrative_labeling_service=NarrativeLabelingService(),
+            embedding_client=self.embedding_client,
+        )
+        self._seed_article_with_claims(
+            title="Шаблонный meta",
+            body_text="Короткий формальный комментарий.",
+            published_at="2026-04-12T10:00:00",
+            claims=[
+                ("Министр сообщил о заседании.", "министр сообщил о заседании", "meta"),
+            ],
+        )
+        self._seed_article_with_claims(
+            title="Содержательный meta",
+            body_text="Есть содержательное сообщение с фактом.",
+            published_at="2026-04-13T10:00:00",
+            claims=[
+                ("ЦБ сообщил об ускорении инфляции до 9 процентов.", "цб сообщил об ускорении инфляции до 9 процентов", "meta"),
+            ],
+        )
+
+        result = fallback_service.run(
+            topic_text=None,
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+        )
+
+        meta_result = next(item for item in result["results"] if item.narrative_type == "meta")
+        self.assertIn("ускорении инфляции", meta_result.formulation.lower())
+
+    def test_narrative_run_can_filter_by_source_domain(self) -> None:
+        self._seed_article_with_claims(
+            title="РИА экономика",
+            body_text="Инфляция и спрос в РИА.",
+            published_at="2026-04-14T10:00:00",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+            claims=[
+                ("Инфляция вырастет к лету.", "инфляция вырастет к лету", "predictive"),
+                ("Рост цен вызвал пересмотр спроса.", "рост цен вызвал пересмотр спроса", "causal"),
+                ("ЦБ сообщил об ускорении инфляции.", "цб сообщил об ускорении инфляции", "meta"),
+            ],
+        )
+        self._seed_article_with_claims(
+            title="Лента экономика",
+            body_text="Инфляция и спрос в Ленте.",
+            published_at="2026-04-15T10:00:00",
+            source_domain="lenta.ru",
+            source_name="Лента.ру",
+            claims=[
+                ("Инфляция замедлится осенью.", "инфляция замедлится осенью", "predictive"),
+                ("Снижение спроса вызвало пересмотр цен.", "снижение спроса вызвало пересмотр цен", "causal"),
+                ("Минфин сообщил о пересмотре прогноза.", "минфин сообщил о пересмотре прогноза", "meta"),
+            ],
+        )
+
+        result = self.service.run(
+            topic_text=None,
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            source_domains=["ria.ru"],
+        )
+
+        self.assertEqual(result["run"].articles_selected_count, 1)
+        self.assertEqual(len(result["articles"]), 1)
+        self.assertTrue(all("ria.ru" in article.url for article in result["articles"]))
 
 if __name__ == "__main__":
     unittest.main()

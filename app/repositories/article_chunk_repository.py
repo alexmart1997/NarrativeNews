@@ -108,8 +108,9 @@ class ArticleChunkRepository(BaseRepository):
         date_from: str,
         date_to: str,
         limit: int = 10,
+        source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
-        return self.search_chunks_lexical(query, date_from, date_to, limit)
+        return self.search_chunks_lexical(query, date_from, date_to, limit, source_domains=source_domains)
 
     def search_chunks_lexical(
         self,
@@ -117,12 +118,20 @@ class ArticleChunkRepository(BaseRepository):
         date_from: str,
         date_to: str,
         limit: int = 20,
+        source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
         tokens = self._tokenize(query)
         if not tokens:
             return []
 
         match_query = " OR ".join(f"{token}*" for token in tokens)
+        source_clause = ""
+        params: list[object] = [match_query, date_from, date_to]
+        if source_domains:
+            placeholders = ", ".join("?" for _ in source_domains)
+            source_clause = f" AND s.domain IN ({placeholders})"
+            params.extend(source_domains)
+        params.append(limit)
         try:
             rows = self._fetch_all(
                 """
@@ -137,17 +146,21 @@ class ArticleChunkRepository(BaseRepository):
                 FROM article_chunks_fts
                 INNER JOIN article_chunks ac ON ac.id = article_chunks_fts.rowid
                 INNER JOIN articles a ON a.id = ac.article_id
+                INNER JOIN sources s ON s.id = a.source_id
                 WHERE article_chunks_fts MATCH ?
                   AND a.is_canonical = 1
                   AND a.published_at BETWEEN ? AND ?
+                """
+                + source_clause
+                + """
                 ORDER BY match_score ASC, a.published_at DESC, ac.article_id ASC, ac.chunk_index ASC
                 LIMIT ?
                 """,
-                (match_query, date_from, date_to, limit),
+                tuple(params),
             )
             return [self._row_to_search_result(row) for row in rows]
         except sqlite3.OperationalError:
-            return self._search_chunks_like(query, date_from, date_to, limit)
+            return self._search_chunks_like(query, date_from, date_to, limit, source_domains=source_domains)
 
     def list_vector_candidates(
         self,
@@ -155,7 +168,14 @@ class ArticleChunkRepository(BaseRepository):
         model_name: str,
         date_from: str,
         date_to: str,
+        source_domains: list[str] | None = None,
     ) -> list[EmbeddedChunkCandidate]:
+        source_clause = ""
+        params: list[object] = [model_name, date_from, date_to]
+        if source_domains:
+            placeholders = ", ".join("?" for _ in source_domains)
+            source_clause = f" AND s.domain IN ({placeholders})"
+            params.extend(source_domains)
         rows = self._fetch_all(
             """
             SELECT
@@ -169,12 +189,16 @@ class ArticleChunkRepository(BaseRepository):
             FROM article_chunk_embeddings ace
             INNER JOIN article_chunks ac ON ac.id = ace.chunk_id
             INNER JOIN articles a ON a.id = ac.article_id
+            INNER JOIN sources s ON s.id = a.source_id
             WHERE ace.model_name = ?
               AND a.is_canonical = 1
               AND a.published_at BETWEEN ? AND ?
+            """
+            + source_clause
+            + """
             ORDER BY a.published_at DESC, ac.article_id ASC, ac.chunk_index ASC
             """,
-            (model_name, date_from, date_to),
+            tuple(params),
         )
 
         candidates: list[EmbeddedChunkCandidate] = []
@@ -208,6 +232,7 @@ class ArticleChunkRepository(BaseRepository):
         date_from: str,
         date_to: str,
         limit: int,
+        source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
         tokens = self._tokenize(query)
         if not tokens:
@@ -225,6 +250,13 @@ class ArticleChunkRepository(BaseRepository):
         for token in tokens:
             score_params.extend([f"%{token}%", f"%{token}%"])
 
+        source_clause = ""
+        source_params: list[object] = []
+        if source_domains:
+            placeholders = ", ".join("?" for _ in source_domains)
+            source_clause = f" AND s.domain IN ({placeholders})"
+            source_params.extend(source_domains)
+
         rows = self._fetch_all(
             f"""
             SELECT
@@ -237,13 +269,15 @@ class ArticleChunkRepository(BaseRepository):
                 ({' + '.join(score_parts)}) AS match_score
             FROM article_chunks ac
             INNER JOIN articles a ON a.id = ac.article_id
+            INNER JOIN sources s ON s.id = a.source_id
             WHERE a.is_canonical = 1
               AND a.published_at BETWEEN ? AND ?
+              {source_clause}
               AND ({' OR '.join(where_parts)})
             ORDER BY match_score DESC, a.published_at DESC, ac.article_id ASC, ac.chunk_index ASC
             LIMIT ?
             """,
-            tuple(score_params + [date_from, date_to] + params + [limit]),
+            tuple(score_params + [date_from, date_to] + source_params + params + [limit]),
         )
         return [self._row_to_search_result(row) for row in rows]
 

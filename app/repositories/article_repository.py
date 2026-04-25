@@ -93,6 +93,34 @@ class ArticleRepository(BaseRepository):
         )
         return [self._row_to_article(row) for row in rows]
 
+    def list_canonical_articles_by_date_range_and_sources(
+        self,
+        date_from: str,
+        date_to: str,
+        source_domains: list[str] | None = None,
+    ) -> list[Article]:
+        clauses = [
+            "published_at BETWEEN ? AND ?",
+            "is_canonical = 1",
+        ]
+        params: list[object] = [date_from, date_to]
+        if source_domains:
+            placeholders = ", ".join("?" for _ in source_domains)
+            clauses.append(
+                f"source_id IN (SELECT id FROM sources WHERE domain IN ({placeholders}))"
+            )
+            params.extend(source_domains)
+        rows = self._fetch_all(
+            f"""
+            SELECT *
+            FROM articles
+            WHERE {' AND '.join(clauses)}
+            ORDER BY published_at ASC, id ASC
+            """,
+            tuple(params),
+        )
+        return [self._row_to_article(row) for row in rows]
+
     def list_canonical_articles_without_claims(
         self,
         *,
@@ -128,9 +156,14 @@ class ArticleRepository(BaseRepository):
         date_from: str,
         date_to: str,
         limit: int = 100,
+        source_domains: list[str] | None = None,
     ) -> list[Article]:
         tokens = [token.strip() for token in topic_text.split() if token.strip()]
-        articles = self.list_canonical_articles_by_date_range(date_from, date_to)
+        articles = self.list_canonical_articles_by_date_range_and_sources(
+            date_from,
+            date_to,
+            source_domains,
+        )
         if not tokens:
             return articles[:limit]
 

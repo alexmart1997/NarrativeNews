@@ -67,6 +67,31 @@ GENERIC_CLAIM_PATTERNS = (
     "уточняется",
     "сообщает",
 )
+META_BOILERPLATE_PATTERNS = (
+    "сообщил о",
+    "сообщила о",
+    "сообщили о",
+    "заявил о",
+    "заявила о",
+    "заявили о",
+    "прокомментировал",
+    "прокомментировала",
+    "отметил",
+    "отметила",
+)
+META_SUBSTANCE_PATTERNS = (
+    "инфляц",
+    "процент",
+    "ставк",
+    "рост",
+    "сниж",
+    "ускор",
+    "срок",
+    "план",
+    "переговор",
+    "санкц",
+    "пошлин",
+)
 LIGHT_NORMALIZATION_ENDINGS = (
     "иями",
     "ями",
@@ -315,7 +340,10 @@ class ClaimGrouper:
         elif 25 <= len(text) <= 220:
             length_bonus = 0.08
         type_bonus = 0.08 if claim.claim_type in {"predictive", "causal"} else 0.04
-        return extraction * 0.4 + classification * 0.35 + length_bonus + type_bonus
+        score = extraction * 0.4 + classification * 0.35 + length_bonus + type_bonus
+        if claim.claim_type == "meta" and self._is_meta_boilerplate_text(text):
+            score -= 0.18
+        return score
 
     def _is_claim_informative(self, claim: Claim) -> bool:
         text = " ".join((claim.normalized_claim_text or claim.claim_text or "").split()).lower()
@@ -326,7 +354,19 @@ class ClaimGrouper:
         unique_tokens = {token for token in TOKEN_RE.findall(text)}
         if len(unique_tokens) < 3:
             return False
+        if claim.claim_type == "meta" and self._is_meta_boilerplate_text(text) and len(unique_tokens) < 5:
+            return False
         return True
+
+    @staticmethod
+    def _is_meta_boilerplate_text(text: str) -> bool:
+        lowered = text.lower()
+        has_boilerplate = any(fragment in lowered for fragment in META_BOILERPLATE_PATTERNS)
+        if not has_boilerplate:
+            return False
+        has_substance = any(fragment in lowered for fragment in META_SUBSTANCE_PATTERNS)
+        has_digits = any(char.isdigit() for char in lowered)
+        return not has_substance and not has_digits
 
     @staticmethod
     def _average_confidence(claims: list[Claim], field_name: str) -> float:
@@ -363,27 +403,46 @@ class NarrativeRunService:
         self.claim_grouper = claim_grouper or ClaimGrouper(self.narrative_scorer, embedding_client=embedding_client)
         self.narrative_labeling_service = narrative_labeling_service or NarrativeLabelingService()
 
-    def run(self, topic_text: str, date_from: str, date_to: str) -> dict[str, object]:
+    def run(
+        self,
+        topic_text: str | None,
+        date_from: str,
+        date_to: str,
+        source_domains: list[str] | None = None,
+    ) -> dict[str, object]:
+        normalized_topic_text = (topic_text or "").strip()
         run = self.narrative_run_repository.create(
             NarrativeRunCreate(
-                topic_text=topic_text,
+                topic_text=normalized_topic_text,
                 date_from=date_from,
                 date_to=date_to,
                 run_status="running",
             )
         )
 
-        articles = self.article_repository.search_canonical_articles_by_topic_and_date_range(
-            topic_text,
-            date_from,
-            date_to,
-        )
+        if normalized_topic_text:
+            articles = self.article_repository.search_canonical_articles_by_topic_and_date_range(
+                normalized_topic_text,
+                date_from,
+                date_to,
+                source_domains=source_domains,
+            )
+        else:
+            articles = self.article_repository.list_canonical_articles_by_date_range_and_sources(
+                date_from,
+                date_to,
+                source_domains,
+            )
         articles_by_id = {article.id: article for article in articles}
-        claims = self._filter_claims_for_topic(topic_text, list(articles_by_id.values()))
+        claims = self._filter_claims_for_topic(normalized_topic_text, list(articles_by_id.values()))
         grouped_clusters = self.claim_grouper.group(claims, articles_by_id)
 
         persisted_clusters = self._persist_clusters(run.id, grouped_clusters)
-        persisted_results = self._persist_results(run.id, persisted_clusters)
+        persisted_results = self._persist_results(
+            run.id,
+            persisted_clusters,
+            topic_text=normalized_topic_text,
+        )
 
         self.narrative_run_repository.update_status(
             run.id,
@@ -489,16 +548,20 @@ class NarrativeRunService:
         self,
         run_id: int,
         persisted_clusters: list[tuple[int, GroupedClaimCluster]],
+        *,
+        topic_text: str,
     ) -> list[object]:
         top_per_type: dict[str, tuple[int, GroupedClaimCluster]] = {}
-        topic_terms = self._extract_topic_terms(self.narrative_run_repository.get_by_id(run_id).topic_text) if self.narrative_run_repository.get_by_id(run_id) else []
-        topic_embedding = self._embed_topic(self.narrative_run_repository.get_by_id(run_id).topic_text) if self.narrative_run_repository.get_by_id(run_id) else None
+        topic_terms = self._extract_topic_terms(topic_text) if topic_text else []
+        topic_embedding = self._embed_topic(topic_text) if topic_terms else None
         for cluster_id, cluster in persisted_clusters:
             if topic_terms and not self._cluster_matches_topic(
                 topic_terms=topic_terms,
                 topic_embedding=topic_embedding,
                 cluster=cluster,
             ):
+                continue
+            if not topic_terms and cluster.claim_type == "meta" and self._is_banal_meta_cluster(cluster):
                 continue
             current = top_per_type.get(cluster.claim_type)
             if current is None or cluster.cluster_score > current[1].cluster_score:
@@ -643,6 +706,22 @@ class NarrativeRunService:
         except Exception:
             return False
         return bool(cluster_embedding) and (claim_anchor_overlap > 0 or article_anchor_overlap > 0) and self._cosine_similarity(topic_embedding, cluster_embedding) >= 0.86
+
+    def _is_banal_meta_cluster(self, cluster: GroupedClaimCluster) -> bool:
+        if cluster.claim_type != "meta":
+            return False
+        texts = [
+            cluster.representative_text,
+            cluster.cluster_summary,
+            *[(claim.normalized_claim_text or claim.claim_text) for claim in cluster.representative_claims[:3]],
+        ]
+        non_empty = [text for text in texts if text]
+        if not non_empty:
+            return True
+        banal_count = sum(
+            1 for text in non_empty if self.claim_grouper._is_meta_boilerplate_text(text)
+        )
+        return banal_count >= max(1, math.ceil(len(non_empty) * 0.6))
 
     def _embed_topic(self, topic_text: str) -> list[float] | None:
         if self.embedding_client is None:
