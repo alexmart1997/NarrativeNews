@@ -20,6 +20,7 @@ from app.services.narrative_intelligence import (
     CorpusArticlePreprocessor,
     EmbeddingNarrativeBackend,
     HybridNarrativeClassifier,
+    LLMNarrativeLabeler,
     LLMNarrativeFrameExtractor,
     NarrativeFrameTextFormatter,
     RollingWindowNarrativeDynamicsAnalyzer,
@@ -326,6 +327,57 @@ class NarrativeIntelligenceTests(unittest.TestCase):
 
         self.assertEqual(len(frames), 1)
         self.assertEqual(frames[0].main_claim, "Narrative")
+
+    def test_frame_extractor_falls_back_to_no_clear_narrative(self) -> None:
+        llm_client = SequenceLLMClient(["still not json", "still not json"])
+        extractor = LLMNarrativeFrameExtractor(llm_client=llm_client)
+        document = ArticleAnalysisDocument(
+            article_id=1,
+            source_id=self.source.id,
+            source_name=self.source.name,
+            source_domain=self.source.domain,
+            title="Fallback title",
+            subtitle=None,
+            body_text="Body",
+            published_at="20260410T1000",
+            category="Новости",
+        )
+
+        frames = extractor.extract_frames(document, ())
+
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0].status, "no_clear_narrative")
+        self.assertEqual(frames[0].main_claim, "Fallback title")
+
+    def test_labeler_falls_back_when_llm_cannot_return_json(self) -> None:
+        llm_client = SequenceLLMClient(["bad", "bad"])
+        labeler = LLMNarrativeLabeler(llm_client=llm_client)
+        cluster = NarrativeCluster(
+            cluster_id="cluster-1",
+            topic_id="topic-1",
+            frame_ids=("frame-1",),
+            centroid_frame_id="frame-1",
+        )
+        frame = NarrativeFrame(
+            frame_id="frame-1",
+            article_id=1,
+            topic_id="topic-1",
+            status="ok",
+            main_claim="Energy prices are driving inflation",
+            actors=("Central bank",),
+            cause="Energy shock",
+            mechanism=None,
+            consequence=None,
+            future_expectation=None,
+            valence="negative",
+            implications=("economic",),
+        )
+
+        labels = labeler.label_clusters([cluster], [frame])
+
+        self.assertEqual(len(labels), 1)
+        self.assertEqual(labels[0].canonical_claim, "Energy prices are driving inflation")
+        self.assertIn("fallback_reason", labels[0].metadata)
 
 
 if __name__ == "__main__":

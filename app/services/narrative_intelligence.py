@@ -258,24 +258,27 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
         document: ArticleAnalysisDocument,
         topics: Sequence[TopicCandidate] | None = None,
     ) -> list[NarrativeFrame]:
-        payload = _generate_json_with_repair(
-            self.llm_client,
-            self._build_prompt(document, topics or ()),
-            system_prompt=self._system_prompt(),
-            temperature=self.config.extraction_temperature,
-            max_tokens=self.config.extraction_max_tokens,
-        )
+        try:
+            payload = _generate_json_with_repair(
+                self.llm_client,
+                self._build_prompt(document, topics or ()),
+                system_prompt=self._system_prompt(),
+                temperature=self.config.extraction_temperature,
+                max_tokens=self.config.extraction_max_tokens,
+            )
+        except LLMError as exc:
+            return [self._fallback_frame(document, error=str(exc))]
 
         raw_frames = payload.get("frames", [])
         if not isinstance(raw_frames, list):
-            raise NarrativeIntelligenceError("Narrative extractor returned invalid JSON: 'frames' must be a list.")
+            return [self._fallback_frame(document, error="frames is not a list")]
 
         frames: list[NarrativeFrame] = []
         for raw_frame in raw_frames[: self.config.max_frames_per_article]:
             frame = self._parse_frame(document, raw_frame)
             if frame is not None:
                 frames.append(frame)
-        return frames
+        return frames or [self._fallback_frame(document, error="no valid frames parsed")]
 
     @staticmethod
     def _system_prompt() -> str:
@@ -355,6 +358,26 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
             representative_quotes=quotes,
             confidence=confidence_value,
             metadata={"raw_json": raw_frame},
+        )
+
+    @staticmethod
+    def _fallback_frame(document: ArticleAnalysisDocument, *, error: str) -> NarrativeFrame:
+        return NarrativeFrame(
+            frame_id=f"frame-{uuid.uuid4().hex}",
+            article_id=document.article_id,
+            topic_id=None,
+            status="no_clear_narrative",
+            main_claim=document.title.strip() or "no clear narrative",
+            actors=(),
+            cause=None,
+            mechanism=None,
+            consequence=None,
+            future_expectation=None,
+            valence=None,
+            implications=(),
+            representative_quotes=(),
+            confidence=None,
+            metadata={"fallback_reason": error},
         )
 
 
@@ -473,14 +496,17 @@ class LLMNarrativeLabeler(NarrativeLabeler):
             representative_frames = [frames_by_id[frame_id] for frame_id in cluster.frame_ids[:5] if frame_id in frames_by_id]
             if not representative_frames:
                 continue
-            payload = _generate_json_with_repair(
-                self.llm_client,
-                self._build_prompt(cluster, representative_frames),
-                system_prompt=self._system_prompt(),
-                temperature=self.config.labeling_temperature,
-                max_tokens=self.config.labeling_max_tokens,
-            )
-            labels.append(self._parse_label(cluster, payload))
+            try:
+                payload = _generate_json_with_repair(
+                    self.llm_client,
+                    self._build_prompt(cluster, representative_frames),
+                    system_prompt=self._system_prompt(),
+                    temperature=self.config.labeling_temperature,
+                    max_tokens=self.config.labeling_max_tokens,
+                )
+                labels.append(self._parse_label(cluster, payload))
+            except LLMError as exc:
+                labels.append(self._fallback_label(cluster, representative_frames, error=str(exc)))
         return labels
 
     @staticmethod
@@ -538,6 +564,34 @@ class LLMNarrativeLabeler(NarrativeLabeler):
             counter_narrative=_coerce_optional_text(payload.get("counter_narrative")),
             representative_examples=_coerce_string_tuple(payload.get("representative_examples")),
             metadata={"raw_json": payload},
+        )
+
+    @staticmethod
+    def _fallback_label(
+        cluster: NarrativeCluster,
+        frames: Sequence[NarrativeFrame],
+        *,
+        error: str,
+    ) -> NarrativeClusterLabel:
+        main_claims = [frame.main_claim for frame in frames if frame.main_claim.strip()]
+        canonical_claim = main_claims[0] if main_claims else "No canonical claim"
+        actors = []
+        for frame in frames:
+            actors.extend(frame.actors)
+        unique_actors = tuple(dict.fromkeys(actor for actor in actors if actor))
+        title = canonical_claim[:96]
+        return NarrativeClusterLabel(
+            cluster_id=cluster.cluster_id,
+            title=title or cluster.cluster_id,
+            summary=canonical_claim or "Narrative cluster fallback summary.",
+            canonical_claim=canonical_claim,
+            typical_formulations=tuple(main_claims[:3]),
+            key_actors=unique_actors[:6],
+            causal_chain=(),
+            dominant_tone=None,
+            counter_narrative=None,
+            representative_examples=tuple(main_claims[:3]),
+            metadata={"fallback_reason": error},
         )
 
 
