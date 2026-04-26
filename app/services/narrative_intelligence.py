@@ -23,7 +23,7 @@ from app.models.narrative_intelligence import (
     TopicCandidate,
 )
 from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
-from app.services.llm import BaseEmbeddingClient, BaseLLMClient
+from app.services.llm import BaseEmbeddingClient, BaseLLMClient, LLMError, _parse_json_object
 
 
 class NarrativeIntelligenceError(RuntimeError):
@@ -258,7 +258,8 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
         document: ArticleAnalysisDocument,
         topics: Sequence[TopicCandidate] | None = None,
     ) -> list[NarrativeFrame]:
-        payload = self.llm_client.generate_json(
+        payload = _generate_json_with_repair(
+            self.llm_client,
             self._build_prompt(document, topics or ()),
             system_prompt=self._system_prompt(),
             temperature=self.config.extraction_temperature,
@@ -472,7 +473,8 @@ class LLMNarrativeLabeler(NarrativeLabeler):
             representative_frames = [frames_by_id[frame_id] for frame_id in cluster.frame_ids[:5] if frame_id in frames_by_id]
             if not representative_frames:
                 continue
-            payload = self.llm_client.generate_json(
+            payload = _generate_json_with_repair(
+                self.llm_client,
                 self._build_prompt(cluster, representative_frames),
                 system_prompt=self._system_prompt(),
                 temperature=self.config.labeling_temperature,
@@ -791,6 +793,40 @@ def _coerce_optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _generate_json_with_repair(
+    llm_client: BaseLLMClient,
+    prompt: str,
+    *,
+    system_prompt: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> dict[str, object]:
+    raw = llm_client.generate_text(
+        prompt,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    try:
+        payload = _parse_json_object(raw)
+    except LLMError:
+        repair_prompt = (
+            "Convert the following model output into one valid JSON object only. "
+            "Do not add explanations, markdown fences, comments, or extra text.\n\n"
+            f"{raw}"
+        )
+        repaired = llm_client.generate_text(
+            repair_prompt,
+            system_prompt="Return one valid JSON object only.",
+            temperature=0.0,
+            max_tokens=max_tokens,
+        )
+        payload = _parse_json_object(repaired)
+    if not isinstance(payload, dict):
+        raise NarrativeIntelligenceError("Narrative LLM output could not be converted into a JSON object.")
+    return payload
 
 
 def _coerce_string_tuple(value: object) -> tuple[str, ...]:

@@ -20,9 +20,11 @@ from app.services.narrative_intelligence import (
     CorpusArticlePreprocessor,
     EmbeddingNarrativeBackend,
     HybridNarrativeClassifier,
+    LLMNarrativeFrameExtractor,
     NarrativeFrameTextFormatter,
     RollingWindowNarrativeDynamicsAnalyzer,
     _coerce_string_tuple,
+    _generate_json_with_repair,
     _to_embedding_matrix,
 )
 
@@ -32,9 +34,20 @@ class StubEmbeddingClient:
 
     def embed_text(self, text: str) -> list[float]:
         lowered = text.lower()
-        if "inflation" in lowered or "инфляц" in lowered:
+        if "inflation" in lowered:
             return [1.0, 0.0]
         return [0.0, 1.0]
+
+
+class SequenceLLMClient:
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = responses
+        self.calls = 0
+
+    def generate_text(self, prompt: str, **_: object) -> str:
+        response = self.responses[min(self.calls, len(self.responses) - 1)]
+        self.calls += 1
+        return response
 
 
 class NarrativeIntelligenceTests(unittest.TestCase):
@@ -275,6 +288,44 @@ class NarrativeIntelligenceTests(unittest.TestCase):
         self.assertEqual(_coerce_string_tuple(None), ())
         self.assertEqual(_coerce_string_tuple(" actor "), ("actor",))
         self.assertEqual(_coerce_string_tuple([" a ", None, ""]), ("a",))
+
+    def test_generate_json_with_repair_recovers_from_invalid_first_response(self) -> None:
+        llm_client = SequenceLLMClient(
+            [
+                "not valid json",
+                '{"frames": [{"status": "ok", "main_claim": "claim", "actors": null, "implications": null}]}',
+            ]
+        )
+
+        payload = _generate_json_with_repair(llm_client, "prompt")
+
+        self.assertIn("frames", payload)
+        self.assertEqual(llm_client.calls, 2)
+
+    def test_frame_extractor_uses_json_repair_flow(self) -> None:
+        llm_client = SequenceLLMClient(
+            [
+                "garbled output",
+                '{"frames": [{"status": "ok", "main_claim": "Narrative", "actors": null, "implications": null, "representative_quotes": null}]}',
+            ]
+        )
+        extractor = LLMNarrativeFrameExtractor(llm_client=llm_client)
+        document = ArticleAnalysisDocument(
+            article_id=1,
+            source_id=self.source.id,
+            source_name=self.source.name,
+            source_domain=self.source.domain,
+            title="Test",
+            subtitle=None,
+            body_text="Body",
+            published_at="20260410T1000",
+            category="Новости",
+        )
+
+        frames = extractor.extract_frames(document, ())
+
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0].main_claim, "Narrative")
 
 
 if __name__ == "__main__":
