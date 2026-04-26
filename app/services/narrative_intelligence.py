@@ -22,7 +22,12 @@ from app.models.narrative_intelligence import (
     NarrativeIntelligenceRunResult,
     TopicCandidate,
 )
-from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
+from app.repositories import (
+    ArticleChunkRepository,
+    ArticleRepository,
+    NarrativeArticleAnalysisRepository,
+    SourceRepository,
+)
 from app.services.llm import BaseEmbeddingClient, BaseLLMClient, LLMError, _parse_json_object
 
 
@@ -804,6 +809,151 @@ class NarrativeIntelligencePipeline:
         )
 
 
+class CachedNarrativeIntelligencePipeline:
+    def __init__(
+        self,
+        *,
+        preprocessor: CorpusArticlePreprocessor,
+        article_analysis_repository: NarrativeArticleAnalysisRepository,
+        topic_backend: TopicDiscoveryBackend,
+        frame_extractor: NarrativeFrameExtractor,
+        embedding_backend: NarrativeEmbeddingBackend,
+        cluster_backend: NarrativeClusterBackend,
+        labeler: NarrativeLabeler,
+        classifier: NarrativeClassifier,
+        dynamics_analyzer: NarrativeDynamicsAnalyzer,
+        evaluator: NarrativeEvaluator | None = None,
+    ) -> None:
+        self.preprocessor = preprocessor
+        self.article_analysis_repository = article_analysis_repository
+        self.topic_backend = topic_backend
+        self.frame_extractor = frame_extractor
+        self.embedding_backend = embedding_backend
+        self.cluster_backend = cluster_backend
+        self.labeler = labeler
+        self.classifier = classifier
+        self.dynamics_analyzer = dynamics_analyzer
+        self.evaluator = evaluator
+
+    def materialize_article_analyses(
+        self,
+        *,
+        date_from: str,
+        date_to: str,
+        source_domains: list[str] | None = None,
+        force: bool = False,
+    ) -> dict[str, int]:
+        documents = self.preprocessor.load_documents(
+            date_from=date_from,
+            date_to=date_to,
+            source_domains=source_domains,
+        )
+        article_ids = [document.article_id for document in documents]
+        existing_ids = set() if force else self.article_analysis_repository.list_existing_article_ids(article_ids=article_ids)
+
+        processed = 0
+        reused = 0
+        frames_total = 0
+        for document in documents:
+            if document.article_id in existing_ids and not force:
+                reused += 1
+                continue
+            frames = self.frame_extractor.extract_frames(document, ())
+            embeddings = self.embedding_backend.encode_frames(frames)
+            payload_json = json.dumps(
+                {
+                    "frames": [_serialize_frame(frame) for frame in frames],
+                    "embeddings": [_serialize_embedding(embedding) for embedding in embeddings],
+                },
+                ensure_ascii=False,
+            )
+            self.article_analysis_repository.upsert_analysis(
+                article_id=document.article_id,
+                source_domain=document.source_domain,
+                published_at=document.published_at,
+                status="completed",
+                frame_count=len(frames),
+                payload_json=payload_json,
+            )
+            processed += 1
+            frames_total += len(frames)
+        return {
+            "documents_total": len(documents),
+            "documents_processed": processed,
+            "documents_reused": reused,
+            "frames_created": frames_total,
+        }
+
+    def run(
+        self,
+        *,
+        date_from: str,
+        date_to: str,
+        source_domains: list[str] | None = None,
+        ensure_cache: bool = True,
+    ) -> NarrativeIntelligenceRunResult:
+        documents = self.preprocessor.load_documents(
+            date_from=date_from,
+            date_to=date_to,
+            source_domains=source_domains,
+        )
+        if ensure_cache:
+            self.materialize_article_analyses(
+                date_from=date_from,
+                date_to=date_to,
+                source_domains=source_domains,
+                force=False,
+            )
+
+        topics = self.topic_backend.discover_topics(documents)
+        topic_by_article_id = self._topic_by_article_id(topics)
+        cached_records = self.article_analysis_repository.list_by_date_range_and_sources(
+            date_from=date_from,
+            date_to=date_to,
+            source_domains=source_domains,
+        )
+
+        frames: list[NarrativeFrame] = []
+        embeddings: list[NarrativeFrameEmbedding] = []
+        for record in cached_records:
+            payload = json.loads(record.payload_json)
+            frame_topic_id = topic_by_article_id.get(record.article_id)
+            for raw_frame in payload.get("frames", []):
+                frame = _deserialize_frame(raw_frame, default_topic_id=frame_topic_id)
+                if frame is not None:
+                    frames.append(frame)
+            for raw_embedding in payload.get("embeddings", []):
+                embedding = _deserialize_embedding(raw_embedding)
+                if embedding is not None:
+                    embeddings.append(embedding)
+
+        clusters = self.cluster_backend.cluster_frames(topics, frames, embeddings)
+        labels = self.labeler.label_clusters(clusters, frames)
+        assignments = self.classifier.classify_frames(frames, clusters, embeddings)
+        dynamics = self.dynamics_analyzer.analyze(assignments, documents, frames)
+        evaluation = self.evaluator.evaluate(topics, frames, clusters, labels) if self.evaluator else None
+
+        return NarrativeIntelligenceRunResult(
+            documents=tuple(documents),
+            topics=tuple(topics),
+            frames=tuple(frames),
+            embeddings=tuple(embeddings),
+            clusters=tuple(clusters),
+            labels=tuple(labels),
+            assignments=tuple(assignments),
+            dynamics=tuple(dynamics),
+            evaluation=evaluation,
+        )
+
+    @staticmethod
+    def _topic_by_article_id(topics: Sequence[TopicCandidate]) -> dict[int, str]:
+        topic_by_article_id: dict[int, str] = {}
+        for topic in topics:
+            for article_id in topic.article_ids:
+                topic_by_article_id.setdefault(article_id, topic.topic_id)
+        return topic_by_article_id
+
+
 def build_default_narrative_intelligence_pipeline(
     *,
     article_repository: ArticleRepository,
@@ -820,6 +970,35 @@ def build_default_narrative_intelligence_pipeline(
             article_chunk_repository=article_chunk_repository,
             source_repository=source_repository,
         ),
+        topic_backend=BERTopicTopicDiscoveryBackend(embedding_backend=embedding_client, config=resolved_config),
+        frame_extractor=LLMNarrativeFrameExtractor(llm_client=llm_client, config=resolved_config),
+        embedding_backend=EmbeddingNarrativeBackend(embedding_client=embedding_client),
+        cluster_backend=HDBSCANNarrativeClusterBackend(),
+        labeler=LLMNarrativeLabeler(llm_client=llm_client, config=resolved_config),
+        classifier=HybridNarrativeClassifier(threshold=resolved_config.classification_threshold, llm_judge=llm_client),
+        dynamics_analyzer=RollingWindowNarrativeDynamicsAnalyzer(),
+        evaluator=NarrativeEvaluatorStub(),
+    )
+
+
+def build_cached_narrative_intelligence_pipeline(
+    *,
+    article_repository: ArticleRepository,
+    article_chunk_repository: ArticleChunkRepository,
+    source_repository: SourceRepository,
+    article_analysis_repository: NarrativeArticleAnalysisRepository,
+    llm_client: BaseLLMClient,
+    embedding_client: BaseEmbeddingClient,
+    config: NarrativeIntelligenceConfig | None = None,
+) -> CachedNarrativeIntelligencePipeline:
+    resolved_config = config or NarrativeIntelligenceConfig()
+    return CachedNarrativeIntelligencePipeline(
+        preprocessor=CorpusArticlePreprocessor(
+            article_repository=article_repository,
+            article_chunk_repository=article_chunk_repository,
+            source_repository=source_repository,
+        ),
+        article_analysis_repository=article_analysis_repository,
         topic_backend=BERTopicTopicDiscoveryBackend(embedding_backend=embedding_client, config=resolved_config),
         frame_extractor=LLMNarrativeFrameExtractor(llm_client=llm_client, config=resolved_config),
         embedding_backend=EmbeddingNarrativeBackend(embedding_client=embedding_client),
@@ -897,6 +1076,78 @@ def _coerce_string_tuple(value: object) -> tuple[str, ...]:
         return tuple(items)
     text = str(value).strip()
     return (text,) if text else ()
+
+
+def _serialize_frame(frame: NarrativeFrame) -> dict[str, object]:
+    return {
+        "frame_id": frame.frame_id,
+        "article_id": frame.article_id,
+        "topic_id": frame.topic_id,
+        "status": frame.status,
+        "main_claim": frame.main_claim,
+        "actors": list(frame.actors),
+        "cause": frame.cause,
+        "mechanism": frame.mechanism,
+        "consequence": frame.consequence,
+        "future_expectation": frame.future_expectation,
+        "valence": frame.valence,
+        "implications": list(frame.implications),
+        "representative_quotes": list(frame.representative_quotes),
+        "confidence": frame.confidence,
+        "metadata": frame.metadata,
+    }
+
+
+def _serialize_embedding(embedding: NarrativeFrameEmbedding) -> dict[str, object]:
+    return {
+        "frame_id": embedding.frame_id,
+        "representation_text": embedding.representation_text,
+        "vector": list(embedding.vector),
+        "model_name": embedding.model_name,
+    }
+
+
+def _deserialize_frame(raw_frame: object, *, default_topic_id: str | None = None) -> NarrativeFrame | None:
+    if not isinstance(raw_frame, dict):
+        return None
+    confidence = raw_frame.get("confidence")
+    confidence_value = float(confidence) if isinstance(confidence, (int, float)) else None
+    topic_id = raw_frame.get("topic_id")
+    return NarrativeFrame(
+        frame_id=str(raw_frame.get("frame_id", "")).strip() or f"frame-{uuid.uuid4().hex}",
+        article_id=int(raw_frame.get("article_id", 0)),
+        topic_id=str(topic_id) if topic_id is not None else default_topic_id,
+        status=str(raw_frame.get("status", "ok")),
+        main_claim=str(raw_frame.get("main_claim", "")).strip(),
+        actors=_coerce_string_tuple(raw_frame.get("actors")),
+        cause=_coerce_optional_text(raw_frame.get("cause")),
+        mechanism=_coerce_optional_text(raw_frame.get("mechanism")),
+        consequence=_coerce_optional_text(raw_frame.get("consequence")),
+        future_expectation=_coerce_optional_text(raw_frame.get("future_expectation")),
+        valence=_coerce_optional_text(raw_frame.get("valence")),
+        implications=_coerce_string_tuple(raw_frame.get("implications")),
+        representative_quotes=_coerce_string_tuple(raw_frame.get("representative_quotes")),
+        confidence=confidence_value,
+        metadata=raw_frame.get("metadata") if isinstance(raw_frame.get("metadata"), dict) else {},
+    )
+
+
+def _deserialize_embedding(raw_embedding: object) -> NarrativeFrameEmbedding | None:
+    if not isinstance(raw_embedding, dict):
+        return None
+    raw_vector = raw_embedding.get("vector")
+    if not isinstance(raw_vector, list) or not raw_vector:
+        return None
+    try:
+        vector = tuple(float(value) for value in raw_vector)
+    except (TypeError, ValueError):
+        return None
+    return NarrativeFrameEmbedding(
+        frame_id=str(raw_embedding.get("frame_id", "")).strip(),
+        representation_text=str(raw_embedding.get("representation_text", "")).strip(),
+        vector=vector,
+        model_name=str(raw_embedding.get("model_name", "")).strip(),
+    )
 
 
 def _to_embedding_matrix(vectors: Sequence[Sequence[float]]) -> object:

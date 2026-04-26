@@ -9,7 +9,12 @@ import uuid
 from app.db.connection import create_connection
 from app.db.schema import create_schema
 from app.models import ArticleCreate, SourceCreate
-from app.repositories import ArticleRepository, NarrativeAnalysisRepository, SourceRepository
+from app.repositories import (
+    ArticleRepository,
+    NarrativeAnalysisRepository,
+    NarrativeArticleAnalysisRepository,
+    SourceRepository,
+)
 from app.utils.text import estimate_word_count
 
 
@@ -23,6 +28,7 @@ class RepositoryTests(unittest.TestCase):
         self.source_repo = SourceRepository(self.connection)
         self.article_repo = ArticleRepository(self.connection)
         self.narrative_repo = NarrativeAnalysisRepository(self.connection)
+        self.narrative_article_repo = NarrativeArticleAnalysisRepository(self.connection)
 
     def tearDown(self) -> None:
         self.connection.close()
@@ -189,6 +195,35 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(saved.id, loaded.id)
         self.assertEqual(loaded.documents_count, 10)
         self.assertEqual(payload, {"topics": [], "clusters": []})
+
+    def test_upsert_and_list_narrative_article_analysis(self) -> None:
+        source_id = self.create_source()
+        article = self.create_article(
+            source_id,
+            url="https://tass.ru/article-cache",
+            published_at="2026-04-10T08:00:00",
+            canonical=True,
+        )
+
+        saved = self.narrative_article_repo.upsert_analysis(
+            article_id=article.id,
+            source_domain="tass.ru",
+            published_at="2026-04-10T08:00:00",
+            status="completed",
+            frame_count=2,
+            payload_json='{"frames": [], "embeddings": []}',
+        )
+        loaded = self.narrative_article_repo.get_by_article_id(article.id)
+        listed = self.narrative_article_repo.list_by_date_range_and_sources(
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            source_domains=["tass.ru"],
+        )
+
+        self.assertIsNotNone(loaded)
+        self.assertEqual(saved.id, loaded.id)
+        self.assertEqual(loaded.frame_count, 2)
+        self.assertEqual([record.article_id for record in listed], [article.id])
 
 
 if __name__ == "__main__":

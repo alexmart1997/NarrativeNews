@@ -20,3 +20,16 @@ class NarrativeAnalysisRun:
     payload_json: str
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class NarrativeArticleAnalysis:
+    id: int
+    article_id: int
+    source_domain: str
+    published_at: str
+    status: str
+    frame_count: int
+    payload_json: str
+    created_at: str
+    updated_at: str

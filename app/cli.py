@@ -98,6 +98,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated source domains, e.g. ria.ru,lenta.ru",
     )
 
+    article_cache_parser = subparsers.add_parser(
+        "precompute-narrative-articles",
+        help="Precompute article-level narrative frames and embeddings once, then reuse them across date ranges.",
+    )
+    article_cache_parser.add_argument("--db-path", type=Path, default=None)
+    article_cache_parser.add_argument("--date-from", required=True)
+    article_cache_parser.add_argument("--date-to", required=True)
+    article_cache_parser.add_argument(
+        "--source-domains",
+        default=None,
+        help="Comma-separated source domains, e.g. ria.ru,lenta.ru",
+    )
+    article_cache_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Recompute article-level analyses even if they already exist in the cache.",
+    )
+
     return parser
 
 
@@ -259,6 +277,20 @@ def main() -> int:
                 indent=2,
             )
         )
+        return 0
+
+    if args.command == "precompute-narrative-articles":
+        initialize_database(settings.database_path)
+        source_domains = _parse_source_domains(args.source_domains)
+        with create_connection(settings.database_path) as connection:
+            pipeline = build_narrative_intelligence_services(connection, settings)
+            stats = pipeline.materialize_article_analyses(
+                date_from=args.date_from,
+                date_to=args.date_to,
+                source_domains=source_domains,
+                force=args.force,
+            )
+        print(json.dumps(stats, ensure_ascii=False, indent=2))
         return 0
 
     parser.error(f"Unsupported command: {args.command}")

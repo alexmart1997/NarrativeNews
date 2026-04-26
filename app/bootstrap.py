@@ -8,6 +8,7 @@ from app.repositories import (
     ArticleChunkRepository,
     ArticleRepository,
     NarrativeAnalysisRepository,
+    NarrativeArticleAnalysisRepository,
     SourceRepository,
 )
 from app.services import (
@@ -15,6 +16,7 @@ from app.services import (
     EmbeddingIndexService,
     NarrativeMaterializationService,
     RAGService,
+    build_cached_narrative_intelligence_pipeline,
     build_default_narrative_intelligence_pipeline,
     create_embedding_client,
     create_llm_client,
@@ -27,6 +29,7 @@ class AppServices:
     article_repository: ArticleRepository
     article_chunk_repository: ArticleChunkRepository
     narrative_analysis_repository: NarrativeAnalysisRepository
+    narrative_article_analysis_repository: NarrativeArticleAnalysisRepository
     chunking_service: ChunkingService
     embedding_index_service: EmbeddingIndexService
     rag_service: RAGService
@@ -37,6 +40,7 @@ def build_app_services(connection: Connection, settings: Settings) -> AppService
     article_repository = ArticleRepository(connection)
     article_chunk_repository = ArticleChunkRepository(connection)
     narrative_analysis_repository = NarrativeAnalysisRepository(connection)
+    narrative_article_analysis_repository = NarrativeArticleAnalysisRepository(connection)
 
     llm_client = create_llm_client(settings)
     embedding_client = create_embedding_client(settings)
@@ -60,6 +64,7 @@ def build_app_services(connection: Connection, settings: Settings) -> AppService
         article_repository=article_repository,
         article_chunk_repository=article_chunk_repository,
         narrative_analysis_repository=narrative_analysis_repository,
+        narrative_article_analysis_repository=narrative_article_analysis_repository,
         chunking_service=chunking_service,
         embedding_index_service=embedding_index_service,
         rag_service=rag_service,
@@ -70,14 +75,16 @@ def build_narrative_intelligence_services(connection: Connection, settings: Sett
     source_repository = SourceRepository(connection)
     article_repository = ArticleRepository(connection)
     article_chunk_repository = ArticleChunkRepository(connection)
+    article_analysis_repository = NarrativeArticleAnalysisRepository(connection)
     llm_client = create_llm_client(settings)
     embedding_client = create_embedding_client(settings)
     if llm_client is None or embedding_client is None:
         raise RuntimeError("Narrative intelligence requires both LLM and embedding clients.")
-    return build_default_narrative_intelligence_pipeline(
+    return build_cached_narrative_intelligence_pipeline(
         article_repository=article_repository,
         article_chunk_repository=article_chunk_repository,
         source_repository=source_repository,
+        article_analysis_repository=article_analysis_repository,
         llm_client=llm_client,
         embedding_client=embedding_client,
     )

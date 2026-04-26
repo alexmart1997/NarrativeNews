@@ -21,7 +21,7 @@ from app.models.narrative_intelligence import (
     NarrativeIntelligenceRunResult,
     TopicCandidate,
 )
-from app.models.narrative_snapshot import NarrativeAnalysisRun
+from app.models.narrative_snapshot import NarrativeAnalysisRun, NarrativeArticleAnalysis
 
 __all__ = [
     "Article",
@@ -35,6 +35,7 @@ __all__ = [
     "EmbeddedChunkCandidate",
     "NarrativeAssignment",
     "NarrativeAnalysisRun",
+    "NarrativeArticleAnalysis",
     "NarrativeCluster",
     "NarrativeClusterLabel",
     "NarrativeDynamicsPoint",

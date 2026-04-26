@@ -16,6 +16,7 @@ from app.services.llm import (
 from app.services.normalization import ArticleNormalizer, NormalizedArticle
 from app.services.narrative_intelligence import (
     BERTopicTopicDiscoveryBackend,
+    CachedNarrativeIntelligencePipeline,
     CorpusArticlePreprocessor,
     EmbeddingNarrativeBackend,
     HDBSCANNarrativeClusterBackend,
@@ -37,6 +38,7 @@ from app.services.narrative_intelligence import (
     NarrativeClassifier,
     RollingWindowNarrativeDynamicsAnalyzer,
     TopicDiscoveryBackend,
+    build_cached_narrative_intelligence_pipeline,
     build_default_narrative_intelligence_pipeline,
 )
 from app.services.narrative_materialization import (
@@ -49,6 +51,7 @@ __all__ = [
     "ArticleNormalizer",
     "BaseEmbeddingClient",
     "BaseLLMClient",
+    "CachedNarrativeIntelligencePipeline",
     "ChunkingConfig",
     "ChunkingService",
     "DeduplicationResult",
@@ -86,6 +89,7 @@ __all__ = [
     "RAGService",
     "RollingWindowNarrativeDynamicsAnalyzer",
     "TopicDiscoveryBackend",
+    "build_cached_narrative_intelligence_pipeline",
     "build_default_narrative_intelligence_pipeline",
     "build_source_domains_key",
     "create_embedding_client",

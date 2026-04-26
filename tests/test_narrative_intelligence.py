@@ -17,6 +17,7 @@ from app.models.narrative_intelligence import (
 from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
 from app.services.chunking import ChunkingService
 from app.services.narrative_intelligence import (
+    CachedNarrativeIntelligencePipeline,
     CorpusArticlePreprocessor,
     EmbeddingNarrativeBackend,
     HybridNarrativeClassifier,
@@ -28,6 +29,7 @@ from app.services.narrative_intelligence import (
     _generate_json_with_repair,
     _to_embedding_matrix,
 )
+from app.repositories import NarrativeArticleAnalysisRepository
 
 
 class StubEmbeddingClient:
@@ -51,6 +53,44 @@ class SequenceLLMClient:
         return response
 
 
+class StubTopicBackend:
+    def discover_topics(self, documents):
+        if not documents:
+            return []
+        article_ids = tuple(document.article_id for document in documents)
+        from app.models.narrative_intelligence import TopicCandidate
+
+        return [TopicCandidate(topic_id="topic-1", label="topic 1", keywords=("economy",), article_ids=article_ids)]
+
+
+class StubClusterBackend:
+    def cluster_frames(self, topics, frames, embeddings):
+        if not frames:
+            return []
+        return [NarrativeCluster(cluster_id="cluster-1", topic_id="topic-1", frame_ids=tuple(frame.frame_id for frame in frames), centroid_frame_id=frames[0].frame_id)]
+
+
+class StubLabeler:
+    def label_clusters(self, clusters, frames):
+        from app.models.narrative_intelligence import NarrativeClusterLabel
+
+        return [
+            NarrativeClusterLabel(
+                cluster_id=cluster.cluster_id,
+                title="Label",
+                summary="Summary",
+                canonical_claim="Claim",
+                typical_formulations=(),
+                key_actors=(),
+                causal_chain=(),
+                dominant_tone=None,
+                counter_narrative=None,
+                representative_examples=(),
+            )
+            for cluster in clusters
+        ]
+
+
 class NarrativeIntelligenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = Path("tests") / ".tmp" / f"narrative-intelligence-{uuid.uuid4().hex}"
@@ -61,6 +101,7 @@ class NarrativeIntelligenceTests(unittest.TestCase):
         self.source_repo = SourceRepository(self.connection)
         self.article_repo = ArticleRepository(self.connection)
         self.chunk_repo = ArticleChunkRepository(self.connection)
+        self.article_analysis_repo = NarrativeArticleAnalysisRepository(self.connection)
         self.chunking_service = ChunkingService()
 
         self.source = self.source_repo.create(
@@ -378,6 +419,51 @@ class NarrativeIntelligenceTests(unittest.TestCase):
         self.assertEqual(len(labels), 1)
         self.assertEqual(labels[0].canonical_claim, "Energy prices are driving inflation")
         self.assertIn("fallback_reason", labels[0].metadata)
+
+    def test_cached_pipeline_materializes_once_and_reuses_across_range_run(self) -> None:
+        self._create_article(
+            title="Inflation article",
+            body_text="Inflation is accelerating because tariffs are rising.",
+            published_at="2026-04-10T10:00:00",
+        )
+        preprocessor = CorpusArticlePreprocessor(
+            article_repository=self.article_repo,
+            article_chunk_repository=self.chunk_repo,
+            source_repository=self.source_repo,
+        )
+        llm_client = SequenceLLMClient(
+            ['{"frames": [{"status": "ok", "main_claim": "Inflation is accelerating", "actors": ["Central bank"], "cause": "tariffs", "mechanism": "pass-through", "consequence": "prices rise", "future_expectation": "inflation stays high", "valence": "negative", "implications": ["economic"], "representative_quotes": [], "confidence": 0.9}]}']
+        )
+        pipeline = CachedNarrativeIntelligencePipeline(
+            preprocessor=preprocessor,
+            article_analysis_repository=self.article_analysis_repo,
+            topic_backend=StubTopicBackend(),
+            frame_extractor=LLMNarrativeFrameExtractor(llm_client=llm_client),
+            embedding_backend=EmbeddingNarrativeBackend(embedding_client=StubEmbeddingClient()),
+            cluster_backend=StubClusterBackend(),
+            labeler=StubLabeler(),
+            classifier=HybridNarrativeClassifier(threshold=0.1),
+            dynamics_analyzer=RollingWindowNarrativeDynamicsAnalyzer(),
+            evaluator=None,
+        )
+
+        stats = pipeline.materialize_article_analyses(
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            source_domains=["ria.ru"],
+        )
+        result = pipeline.run(
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            source_domains=["ria.ru"],
+            ensure_cache=False,
+        )
+
+        self.assertEqual(stats["documents_total"], 1)
+        self.assertEqual(stats["documents_processed"], 1)
+        self.assertEqual(len(result.frames), 1)
+        self.assertEqual(result.frames[0].topic_id, "topic-1")
+        self.assertEqual(len(result.clusters), 1)
 
 
 if __name__ == "__main__":
