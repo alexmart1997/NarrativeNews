@@ -128,8 +128,22 @@ def _render_clusters(snapshot: dict[str, object]) -> None:
         ),
         reverse=True,
     )
+    strong_clusters = []
+    for cluster in ordered_clusters:
+        cluster_id = str(cluster.get("cluster_id"))
+        assignment_count = assignments_by_cluster_id.get(cluster_id, 0)
+        article_support = ((cluster.get("metadata") or {}) if isinstance(cluster.get("metadata"), dict) else {}).get("article_support", 0)
+        if cluster.get("noise"):
+            continue
+        if max(assignment_count, article_support) < 3:
+            continue
+        strong_clusters.append(cluster)
 
-    for cluster in ordered_clusters[:20]:
+    if not strong_clusters:
+        st.info("Сильные нарративные кластеры не выделены. Текущий результат всё ещё слишком шумный.")
+        return
+
+    for cluster in strong_clusters[:20]:
         cluster_id = str(cluster.get("cluster_id"))
         label = labels_by_cluster_id.get(cluster_id)
         title = label.get("title") if isinstance(label, dict) and label.get("title") else cluster_id

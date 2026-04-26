@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 import json
+import re
 from statistics import mean
 from typing import Iterable, Sequence
 import uuid
@@ -52,6 +53,11 @@ class NarrativeIntelligenceConfig:
     classification_threshold: float = 0.78
     dynamics_min_points: int = 2
     max_frames_per_article: int = 3
+    min_topic_text_characters: int = 160
+    min_narrative_claim_characters: int = 40
+    min_cluster_size: int = 3
+    min_cluster_article_support: int = 3
+    min_cluster_source_support: int = 1
 
 
 class TopicDiscoveryBackend(ABC):
@@ -229,11 +235,13 @@ class BERTopicTopicDiscoveryBackend(TopicDiscoveryBackend):
         for topic_id, article_ids in article_ids_by_topic.items():
             if topic_id == -1:
                 continue
-            keywords = tuple(word for word, _score in topic_model.get_topic(topic_id)[:8])
+            keywords = _clean_topic_keywords(topic_model.get_topic(topic_id)[:12])
+            if not keywords:
+                keywords = ("общая тема",)
             topics.append(
                 TopicCandidate(
                     topic_id=f"topic-{topic_id}",
-                    label=f"topic {topic_id}",
+                    label=_topic_label_from_keywords(keywords, topic_id),
                     keywords=keywords,
                     article_ids=tuple(article_ids),
                     metadata={
@@ -246,11 +254,15 @@ class BERTopicTopicDiscoveryBackend(TopicDiscoveryBackend):
 
     @staticmethod
     def _document_text(document: ArticleAnalysisDocument) -> str:
-        parts = [document.title]
+        parts = [_normalize_topic_text(document.title)]
         if document.subtitle:
-            parts.append(document.subtitle)
-        parts.extend(document.chunk_texts[:4] or (document.body_text,))
-        return "\n\n".join(part for part in parts if part)
+            parts.append(_normalize_topic_text(document.subtitle))
+        chunk_texts = document.chunk_texts[:4] or (document.body_text,)
+        parts.extend(_normalize_topic_text(text) for text in chunk_texts)
+        merged = "\n\n".join(part for part in parts if part)
+        if len(merged) < 160:
+            merged = _normalize_topic_text(document.body_text)
+        return merged
 
 
 class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
@@ -342,17 +354,18 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
         if not isinstance(raw_frame, dict):
             return None
         status = str(raw_frame.get("status", "ok"))
+        main_claim = str(raw_frame.get("main_claim", "")).strip()
         actors = _coerce_string_tuple(raw_frame.get("actors"))
         implications = _coerce_string_tuple(raw_frame.get("implications"))
         quotes = _coerce_string_tuple(raw_frame.get("representative_quotes"))
         confidence = raw_frame.get("confidence")
         confidence_value = float(confidence) if isinstance(confidence, (int, float)) else None
-        return NarrativeFrame(
+        frame = NarrativeFrame(
             frame_id=f"frame-{uuid.uuid4().hex}",
             article_id=document.article_id,
             topic_id=str(raw_frame.get("topic_id")) if raw_frame.get("topic_id") is not None else None,
             status=status,
-            main_claim=str(raw_frame.get("main_claim", "")).strip(),
+            main_claim=main_claim,
             actors=actors,
             cause=_coerce_optional_text(raw_frame.get("cause")),
             mechanism=_coerce_optional_text(raw_frame.get("mechanism")),
@@ -362,8 +375,29 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
             implications=implications,
             representative_quotes=quotes,
             confidence=confidence_value,
-            metadata={"raw_json": raw_frame},
+            metadata={"raw_json": raw_frame, "source_domain": document.source_domain},
         )
+        if not _is_narrative_frame_informative(frame):
+            if frame.status == "no_clear_narrative":
+                return frame
+            return NarrativeFrame(
+                frame_id=frame.frame_id,
+                article_id=frame.article_id,
+                topic_id=frame.topic_id,
+                status="no_clear_narrative",
+                main_claim=document.title.strip() or "no clear narrative",
+                actors=(),
+                cause=None,
+                mechanism=None,
+                consequence=None,
+                future_expectation=None,
+                valence=None,
+                implications=(),
+                representative_quotes=(),
+                confidence=None,
+                metadata={**frame.metadata, "fallback_reason": "frame_not_informative"},
+            )
+        return frame
 
     @staticmethod
     def _fallback_frame(document: ArticleAnalysisDocument, *, error: str) -> NarrativeFrame:
@@ -382,7 +416,7 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
             implications=(),
             representative_quotes=(),
             confidence=None,
-            metadata={"fallback_reason": error},
+            metadata={"fallback_reason": error, "source_domain": document.source_domain},
         )
 
 
@@ -424,8 +458,10 @@ class EmbeddingNarrativeBackend(NarrativeEmbeddingBackend):
 
 
 class HDBSCANNarrativeClusterBackend(NarrativeClusterBackend):
-    def __init__(self, min_cluster_size: int = 5) -> None:
+    def __init__(self, min_cluster_size: int = 5, min_article_support: int = 3, min_source_support: int = 1) -> None:
         self.min_cluster_size = min_cluster_size
+        self.min_article_support = min_article_support
+        self.min_source_support = min_source_support
 
     def cluster_frames(
         self,
@@ -444,29 +480,37 @@ class HDBSCANNarrativeClusterBackend(NarrativeClusterBackend):
         if not embeddings:
             return []
 
-        vectors = [list(embedding.vector) for embedding in embeddings]
+        frame_by_id = {frame.frame_id: frame for frame in frames}
+        eligible_embeddings = [
+            embedding
+            for embedding in embeddings
+            if embedding.frame_id in frame_by_id and _is_cluster_eligible_frame(frame_by_id[embedding.frame_id])
+        ]
+        if not eligible_embeddings:
+            return []
+
+        vectors = [list(embedding.vector) for embedding in eligible_embeddings]
         clusterer = hdbscan.HDBSCAN(min_cluster_size=self.min_cluster_size, metric="euclidean")
         labels = clusterer.fit_predict(vectors)
 
-        frame_by_id = {frame.frame_id: frame for frame in frames}
         clusters_by_label: dict[int, list[str]] = defaultdict(list)
-        for embedding, label in zip(embeddings, labels, strict=False):
+        for embedding, label in zip(eligible_embeddings, labels, strict=False):
             clusters_by_label[int(label)].append(embedding.frame_id)
 
         clusters: list[NarrativeCluster] = []
         for label, frame_ids in clusters_by_label.items():
             if label == -1:
-                for frame_id in frame_ids:
-                    frame = frame_by_id.get(frame_id)
-                    clusters.append(
-                        NarrativeCluster(
-                            cluster_id=f"noise-{frame_id}",
-                            topic_id=frame.topic_id if frame else None,
-                            frame_ids=(frame_id,),
-                            centroid_frame_id=frame_id,
-                            noise=True,
-                        )
-                    )
+                continue
+
+            article_ids = {frame_by_id[frame_id].article_id for frame_id in frame_ids if frame_id in frame_by_id}
+            source_ids = {
+                frame_by_id[frame_id].metadata.get("source_domain")
+                for frame_id in frame_ids
+                if frame_id in frame_by_id
+            }
+            if len(article_ids) < self.min_article_support:
+                continue
+            if len({source_id for source_id in source_ids if source_id}) < self.min_source_support:
                 continue
 
             topic_ids = Counter(
@@ -480,6 +524,10 @@ class HDBSCANNarrativeClusterBackend(NarrativeClusterBackend):
                     frame_ids=tuple(frame_ids),
                     centroid_frame_id=frame_ids[0] if frame_ids else None,
                     noise=False,
+                    metadata={
+                        "article_support": len(article_ids),
+                        "source_support": len({source_id for source_id in source_ids if source_id}),
+                    },
                 )
             )
         return clusters
@@ -519,6 +567,7 @@ class LLMNarrativeLabeler(NarrativeLabeler):
         return (
             "You label narrative clusters for analysts. "
             "Use concise analytical language, not journalistic headlines. "
+            "Return all fields in Russian. "
             "Return valid JSON only."
         )
 
@@ -973,7 +1022,11 @@ def build_default_narrative_intelligence_pipeline(
         topic_backend=BERTopicTopicDiscoveryBackend(embedding_backend=embedding_client, config=resolved_config),
         frame_extractor=LLMNarrativeFrameExtractor(llm_client=llm_client, config=resolved_config),
         embedding_backend=EmbeddingNarrativeBackend(embedding_client=embedding_client),
-        cluster_backend=HDBSCANNarrativeClusterBackend(),
+        cluster_backend=HDBSCANNarrativeClusterBackend(
+            min_cluster_size=resolved_config.min_cluster_size,
+            min_article_support=resolved_config.min_cluster_article_support,
+            min_source_support=resolved_config.min_cluster_source_support,
+        ),
         labeler=LLMNarrativeLabeler(llm_client=llm_client, config=resolved_config),
         classifier=HybridNarrativeClassifier(threshold=resolved_config.classification_threshold, llm_judge=llm_client),
         dynamics_analyzer=RollingWindowNarrativeDynamicsAnalyzer(),
@@ -1002,7 +1055,11 @@ def build_cached_narrative_intelligence_pipeline(
         topic_backend=BERTopicTopicDiscoveryBackend(embedding_backend=embedding_client, config=resolved_config),
         frame_extractor=LLMNarrativeFrameExtractor(llm_client=llm_client, config=resolved_config),
         embedding_backend=EmbeddingNarrativeBackend(embedding_client=embedding_client),
-        cluster_backend=HDBSCANNarrativeClusterBackend(),
+        cluster_backend=HDBSCANNarrativeClusterBackend(
+            min_cluster_size=resolved_config.min_cluster_size,
+            min_article_support=resolved_config.min_cluster_article_support,
+            min_source_support=resolved_config.min_cluster_source_support,
+        ),
         labeler=LLMNarrativeLabeler(llm_client=llm_client, config=resolved_config),
         classifier=HybridNarrativeClassifier(threshold=resolved_config.classification_threshold, llm_judge=llm_client),
         dynamics_analyzer=RollingWindowNarrativeDynamicsAnalyzer(),
@@ -1076,6 +1133,88 @@ def _coerce_string_tuple(value: object) -> tuple[str, ...]:
         return tuple(items)
     text = str(value).strip()
     return (text,) if text else ()
+
+
+RUSSIAN_STOPWORDS = {
+    "это", "как", "что", "или", "для", "при", "после", "между", "также", "который", "которая",
+    "которые", "новости", "риа", "россия", "заявил", "сообщил", "сообщила", "сказал", "сказала",
+    "2026", "2025",
+}
+
+
+def _normalize_topic_text(text: str) -> str:
+    cleaned = text.lower()
+    cleaned = re.sub(r"https?://\S+", " ", cleaned)
+    cleaned = re.sub(r"\b\d{8,}\b", " ", cleaned)
+    cleaned = re.sub(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", " ", cleaned)
+    cleaned = re.sub(r"\b\d+\b", " ", cleaned)
+    cleaned = re.sub(r"\b[a-z]{1,4}\d+[a-z0-9-]*\b", " ", cleaned)
+    cleaned = re.sub(r"\b[a-z0-9_-]{1,5}\b", " ", cleaned)
+    cleaned = re.sub(r"[^\w\s\-а-яё]", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    tokens = [
+        token
+        for token in cleaned.split()
+        if len(token) >= 3 and token not in RUSSIAN_STOPWORDS and not token.isdigit()
+    ]
+    return " ".join(tokens[:220])
+
+
+def _clean_topic_keywords(raw_keywords: Sequence[tuple[str, float]]) -> tuple[str, ...]:
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for raw_keyword, _score in raw_keywords:
+        keyword = _normalize_topic_text(str(raw_keyword))
+        if not keyword:
+            continue
+        keyword = keyword.split(" ", 1)[0]
+        if len(keyword) < 3 or keyword in seen:
+            continue
+        seen.add(keyword)
+        keywords.append(keyword)
+        if len(keywords) >= 8:
+            break
+    return tuple(keywords)
+
+
+def _topic_label_from_keywords(keywords: tuple[str, ...], topic_id: int) -> str:
+    if not keywords:
+        return f"topic {topic_id}"
+    return " / ".join(keywords[:3])
+
+
+def _is_narrative_frame_informative(frame: NarrativeFrame) -> bool:
+    if frame.status == "no_clear_narrative":
+        return True
+    if len(frame.main_claim.strip()) < 40:
+        return False
+    lower_claim = frame.main_claim.lower()
+    if any(
+        fragment in lower_claim
+        for fragment in (
+            "произош",
+            "случил",
+            "взрыв",
+            "заявил",
+            "сообщил",
+            "сообщила",
+            "прошел",
+            "состоялся",
+        )
+    ) and not any((frame.cause, frame.mechanism, frame.consequence, frame.future_expectation)):
+        return False
+    structure_score = sum(
+        1
+        for value in (frame.cause, frame.mechanism, frame.consequence, frame.future_expectation)
+        if value and len(value.strip()) >= 12
+    )
+    actor_score = 1 if frame.actors else 0
+    implication_score = 1 if frame.implications else 0
+    return (structure_score + actor_score + implication_score) >= 2
+
+
+def _is_cluster_eligible_frame(frame: NarrativeFrame) -> bool:
+    return frame.status != "no_clear_narrative" and _is_narrative_frame_informative(frame)
 
 
 def _serialize_frame(frame: NarrativeFrame) -> dict[str, object]:

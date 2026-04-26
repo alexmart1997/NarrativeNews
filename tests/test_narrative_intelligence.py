@@ -348,7 +348,7 @@ class NarrativeIntelligenceTests(unittest.TestCase):
         llm_client = SequenceLLMClient(
             [
                 "garbled output",
-                '{"frames": [{"status": "ok", "main_claim": "Narrative", "actors": null, "implications": null, "representative_quotes": null}]}',
+                '{"frames": [{"status": "ok", "main_claim": "Рост тарифов ускоряет инфляцию и усиливает давление на потребительские цены.", "actors": ["ЦБ"], "cause": "рост тарифов", "mechanism": "издержки переносятся в розничные цены", "consequence": "ускоряется инфляция", "future_expectation": "давление на цены сохранится", "implications": ["economic"], "representative_quotes": null}]}',
             ]
         )
         extractor = LLMNarrativeFrameExtractor(llm_client=llm_client)
@@ -367,7 +367,10 @@ class NarrativeIntelligenceTests(unittest.TestCase):
         frames = extractor.extract_frames(document, ())
 
         self.assertEqual(len(frames), 1)
-        self.assertEqual(frames[0].main_claim, "Narrative")
+        self.assertEqual(
+            frames[0].main_claim,
+            "Рост тарифов ускоряет инфляцию и усиливает давление на потребительские цены.",
+        )
 
     def test_frame_extractor_falls_back_to_no_clear_narrative(self) -> None:
         llm_client = SequenceLLMClient(["still not json", "still not json"])
