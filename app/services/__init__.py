@@ -39,6 +39,10 @@ from app.services.narrative_intelligence import (
     TopicDiscoveryBackend,
     build_default_narrative_intelligence_pipeline,
 )
+from app.services.narrative_materialization import (
+    NarrativeMaterializationService,
+    build_source_domains_key,
+)
 from app.services.rag import RAGSearchResult, RAGService
 
 __all__ = [
@@ -76,12 +80,14 @@ __all__ = [
     "NarrativeIntelligenceDependencyError",
     "NarrativeIntelligenceError",
     "NarrativeIntelligencePipeline",
+    "NarrativeMaterializationService",
     "NarrativeLabeler",
     "RAGSearchResult",
     "RAGService",
     "RollingWindowNarrativeDynamicsAnalyzer",
     "TopicDiscoveryBackend",
     "build_default_narrative_intelligence_pipeline",
+    "build_source_domains_key",
     "create_embedding_client",
     "create_llm_client",
 ]

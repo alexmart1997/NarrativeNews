@@ -9,7 +9,7 @@ import uuid
 from app.db.connection import create_connection
 from app.db.schema import create_schema
 from app.models import ArticleCreate, SourceCreate
-from app.repositories import ArticleRepository, SourceRepository
+from app.repositories import ArticleRepository, NarrativeAnalysisRepository, SourceRepository
 from app.utils.text import estimate_word_count
 
 
@@ -22,6 +22,7 @@ class RepositoryTests(unittest.TestCase):
         create_schema(self.connection)
         self.source_repo = SourceRepository(self.connection)
         self.article_repo = ArticleRepository(self.connection)
+        self.narrative_repo = NarrativeAnalysisRepository(self.connection)
 
     def tearDown(self) -> None:
         self.connection.close()
@@ -156,6 +157,38 @@ class RepositoryTests(unittest.TestCase):
             [article.url for article in canonical],
             ["https://tass.ru/a1", "https://tass.ru/a3"],
         )
+
+    def test_save_and_load_narrative_snapshot_run(self) -> None:
+        saved = self.narrative_repo.save_run(
+            source_domains_key="ria.ru",
+            date_from="20260101T0000",
+            date_to="20260430T2359",
+            payload_json='{"topics": [], "clusters": []}',
+            status="completed",
+            documents_count=10,
+            topics_count=2,
+            frames_count=5,
+            clusters_count=1,
+            labels_count=1,
+            assignments_count=4,
+            dynamics_count=1,
+        )
+
+        loaded = self.narrative_repo.get_latest_run(
+            source_domains_key="ria.ru",
+            date_from="2026-01-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+        )
+        payload = self.narrative_repo.get_latest_payload(
+            source_domains_key="ria.ru",
+            date_from="2026-01-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+        )
+
+        self.assertIsNotNone(loaded)
+        self.assertEqual(saved.id, loaded.id)
+        self.assertEqual(loaded.documents_count, 10)
+        self.assertEqual(payload, {"topics": [], "clusters": []})
 
 
 if __name__ == "__main__":

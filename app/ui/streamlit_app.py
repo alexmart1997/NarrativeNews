@@ -4,10 +4,11 @@ from datetime import date
 
 import streamlit as st
 
-from app.bootstrap import build_app_services, build_narrative_intelligence_services
+from app.bootstrap import build_app_services
 from app.config.settings import get_settings
 from app.db.connection import create_connection
 from app.db.init_db import initialize_database
+from app.services import build_source_domains_key
 
 
 @st.cache_resource
@@ -82,167 +83,206 @@ def render_rag(services) -> None:
                 st.info("Фрагменты не найдены.")
 
 
-def build_narrative_pipeline(connection, settings):
-    return build_narrative_intelligence_services(connection, settings)
-
-
-def _format_keywords(keywords: tuple[str, ...]) -> str:
+def _format_keywords(keywords: list[str] | tuple[str, ...]) -> str:
     return ", ".join(keyword for keyword in keywords if keyword) or "—"
 
 
-def _render_topics(result) -> None:
+def _render_topics(topics: list[dict[str, object]]) -> None:
     st.markdown("### Темы")
-    if not result.topics:
+    if not topics:
         st.info("Темы не выделены.")
         return
-    for topic in result.topics[:12]:
-        with st.expander(f"{topic.label} ({len(topic.article_ids)} статей)"):
-            st.write(f"**ID:** {topic.topic_id}")
-            st.write(f"**Ключевые слова:** {_format_keywords(topic.keywords)}")
+    for topic in topics[:12]:
+        article_ids = topic.get("article_ids") or []
+        keywords = topic.get("keywords") or []
+        with st.expander(f"{topic.get('label', 'topic')} ({len(article_ids)} статей)"):
+            st.write(f"**ID:** {topic.get('topic_id', '—')}")
+            st.write(f"**Ключевые слова:** {_format_keywords(keywords)}")
 
 
-def _render_clusters(result) -> None:
+def _render_clusters(snapshot: dict[str, object]) -> None:
     st.markdown("### Нарративные кластеры")
-    if not result.clusters:
+    clusters = list(snapshot.get("clusters") or [])
+    labels = list(snapshot.get("labels") or [])
+    assignments = list(snapshot.get("assignments") or [])
+    if not clusters:
         st.info("Устойчивые нарративы не выделены.")
         return
 
-    labels_by_cluster_id = {label.cluster_id: label for label in result.labels}
+    labels_by_cluster_id = {
+        str(label.get("cluster_id")): label
+        for label in labels
+        if isinstance(label, dict) and label.get("cluster_id") is not None
+    }
     assignments_by_cluster_id: dict[str, int] = {}
-    for assignment in result.assignments:
-        if assignment.assigned and assignment.cluster_id:
-            assignments_by_cluster_id[assignment.cluster_id] = assignments_by_cluster_id.get(assignment.cluster_id, 0) + 1
+    for assignment in assignments:
+        if isinstance(assignment, dict) and assignment.get("assigned") and assignment.get("cluster_id"):
+            cluster_id = str(assignment["cluster_id"])
+            assignments_by_cluster_id[cluster_id] = assignments_by_cluster_id.get(cluster_id, 0) + 1
 
     ordered_clusters = sorted(
-        result.clusters,
-        key=lambda cluster: assignments_by_cluster_id.get(cluster.cluster_id, len(cluster.frame_ids)),
+        clusters,
+        key=lambda cluster: assignments_by_cluster_id.get(
+            str(cluster.get("cluster_id")),
+            len(cluster.get("frame_ids") or []),
+        ),
         reverse=True,
     )
 
     for cluster in ordered_clusters[:20]:
-        label = labels_by_cluster_id.get(cluster.cluster_id)
-        title = label.title if label and label.title else cluster.cluster_id
-        suffix = " [noise]" if cluster.noise else ""
+        cluster_id = str(cluster.get("cluster_id"))
+        label = labels_by_cluster_id.get(cluster_id)
+        title = label.get("title") if isinstance(label, dict) and label.get("title") else cluster_id
+        suffix = " [noise]" if cluster.get("noise") else ""
         with st.expander(f"{title}{suffix}"):
-            st.write(f"**Cluster ID:** {cluster.cluster_id}")
-            st.write(f"**Тема:** {cluster.topic_id or '—'}")
-            st.write(f"**Фреймов в кластере:** {len(cluster.frame_ids)}")
-            st.write(f"**Назначений:** {assignments_by_cluster_id.get(cluster.cluster_id, 0)}")
+            st.write(f"**Cluster ID:** {cluster_id}")
+            st.write(f"**Тема:** {cluster.get('topic_id') or '—'}")
+            st.write(f"**Фреймов в кластере:** {len(cluster.get('frame_ids') or [])}")
+            st.write(f"**Назначений:** {assignments_by_cluster_id.get(cluster_id, 0)}")
             if label is None:
-                st.info("LLM-лейбл для кластера не сформирован.")
+                st.info("Лейбл кластера не сформирован.")
                 continue
-            st.write(f"**Описание:** {label.summary or '—'}")
-            st.write(f"**Canonical claim:** {label.canonical_claim or '—'}")
-            st.write(f"**Ключевые акторы:** {', '.join(label.key_actors) if label.key_actors else '—'}")
-            st.write(f"**Причинная цепочка:** {' → '.join(label.causal_chain) if label.causal_chain else '—'}")
-            st.write(f"**Доминирующая тональность:** {label.dominant_tone or '—'}")
-            st.write(f"**Контр-нарратив:** {label.counter_narrative or '—'}")
-            if label.typical_formulations:
+            st.write(f"**Описание:** {label.get('summary') or '—'}")
+            st.write(f"**Canonical claim:** {label.get('canonical_claim') or '—'}")
+            key_actors = label.get("key_actors") or []
+            st.write(f"**Ключевые акторы:** {', '.join(key_actors) if key_actors else '—'}")
+            causal_chain = label.get("causal_chain") or []
+            st.write(f"**Причинная цепочка:** {' → '.join(causal_chain) if causal_chain else '—'}")
+            st.write(f"**Доминирующая тональность:** {label.get('dominant_tone') or '—'}")
+            st.write(f"**Контр-нарратив:** {label.get('counter_narrative') or '—'}")
+            typical_formulations = label.get("typical_formulations") or []
+            if typical_formulations:
                 st.write("**Типичные формулировки:**")
-                for item in label.typical_formulations[:5]:
+                for item in typical_formulations[:5]:
                     st.markdown(f"- {item}")
-            if label.representative_examples:
+            representative_examples = label.get("representative_examples") or []
+            if representative_examples:
                 st.write("**Representative examples:**")
-                for item in label.representative_examples[:5]:
+                for item in representative_examples[:5]:
                     st.markdown(f"- {item}")
 
 
-def _render_dynamics(result) -> None:
+def _render_dynamics(snapshot: dict[str, object]) -> None:
     st.markdown("### Динамика")
-    if not result.dynamics:
+    dynamics = list(snapshot.get("dynamics") or [])
+    labels = list(snapshot.get("labels") or [])
+    if not dynamics:
         st.info("Данные по динамике пока не выделены.")
         return
 
-    labels_by_cluster_id = {label.cluster_id: label for label in result.labels}
-    for series in result.dynamics[:12]:
-        label = labels_by_cluster_id.get(series.cluster_id)
-        title = label.title if label and label.title else series.cluster_id
+    labels_by_cluster_id = {
+        str(label.get("cluster_id")): label
+        for label in labels
+        if isinstance(label, dict) and label.get("cluster_id") is not None
+    }
+    for series in dynamics[:12]:
+        cluster_id = str(series.get("cluster_id"))
+        label = labels_by_cluster_id.get(cluster_id)
+        title = label.get("title") if isinstance(label, dict) and label.get("title") else cluster_id
         with st.expander(title):
-            st.write(f"**Всего статей:** {series.total_articles}")
+            st.write(f"**Всего статей:** {series.get('total_articles', 0)}")
             st.write(
-                f"**Рост:** {round(series.growth_rate, 3) if series.growth_rate is not None else '—'}"
+                f"**Рост:** {round(series['growth_rate'], 3) if series.get('growth_rate') is not None else '—'}"
             )
             st.write(
-                f"**Устойчивость:** {round(series.stability_score, 3) if series.stability_score is not None else '—'}"
+                f"**Устойчивость:** {round(series['stability_score'], 3) if series.get('stability_score') is not None else '—'}"
             )
-            for point in series.points:
+            for point in series.get("points") or []:
                 st.markdown(
-                    f"- `{point.period_start}`: статей={point.article_count}, "
-                    f"доля={round(point.share_of_corpus, 3)}, "
-                    f"diversity={round(point.source_diversity, 3)}, "
-                    f"burst={round(point.burst_score, 3) if point.burst_score is not None else '—'}"
+                    f"- `{point.get('period_start', '—')}`: статей={point.get('article_count', 0)}, "
+                    f"доля={round(point.get('share_of_corpus', 0.0), 3)}, "
+                    f"diversity={round(point.get('source_diversity', 0.0), 3)}, "
+                    f"burst={round(point['burst_score'], 3) if point.get('burst_score') is not None else '—'}"
                 )
 
 
-def render_narratives(connection, services, settings) -> None:
+def render_narratives(services) -> None:
     st.subheader("Narrative Intelligence")
     st.caption(
-        "Этот режим ищет не просто темы, а повторяющиеся интерпретационные истории: "
-        "кто действует, почему это происходит, к чему ведёт и какое ожидание формируется."
+        "Во вкладке показываются уже предрассчитанные narrative snapshots. "
+        "Тяжёлый анализ запускается локально отдельной командой и сохраняется в БД."
     )
 
     source_options = get_source_options(services)
-    selected_source_label = st.selectbox(
-        "Источник",
-        list(source_options.keys()),
-        key="narrative_source",
-    )
+    selected_source_label = st.selectbox("Источник", list(source_options.keys()), key="narrative_source")
     col1, col2 = st.columns(2)
     with col1:
         date_from = st.date_input("Дата с", value=date(2026, 1, 1), key="narrative_date_from")
     with col2:
         date_to = st.date_input("Дата по", value=date.today(), key="narrative_date_to")
 
-    if st.button("Запустить анализ нарративов", key="narrative_run"):
-        try:
-            pipeline = build_narrative_pipeline(connection, settings)
-        except Exception as exc:
-            st.error(f"Не удалось подготовить narrative pipeline: {exc}")
-            return
+    date_from_value = f"{date_from.isoformat()}T00:00:00"
+    date_to_value = f"{date_to.isoformat()}T23:59:59"
+    source_domains = source_options[selected_source_label]
+    source_domains_key = build_source_domains_key(source_domains)
 
-        try:
-            with st.spinner("Анализируем корпус, выделяем темы, извлекаем фреймы и собираем нарративы..."):
-                result = pipeline.run(
-                    date_from=f"{date_from.isoformat()}T00:00:00",
-                    date_to=f"{date_to.isoformat()}T23:59:59",
-                    source_domains=source_options[selected_source_label],
-                )
-        except Exception as exc:
-            st.error(f"Ошибка при запуске narrative intelligence: {exc}")
-            return
+    snapshot = services.narrative_analysis_repository.get_latest_payload(
+        source_domains_key=source_domains_key,
+        date_from=date_from_value,
+        date_to=date_to_value,
+    )
+    run = services.narrative_analysis_repository.get_latest_run(
+        source_domains_key=source_domains_key,
+        date_from=date_from_value,
+        date_to=date_to_value,
+    )
 
-        st.markdown("### Сводка запуска")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Документы", len(result.documents))
-        col2.metric("Темы", len(result.topics))
-        col3.metric("Фреймы", len(result.frames))
-        col4, col5, col6 = st.columns(3)
-        col4.metric("Кластеры", len(result.clusters))
-        col5.metric("Лейблы", len(result.labels))
-        assigned_count = sum(1 for assignment in result.assignments if assignment.assigned)
-        col6.metric("Назначения", assigned_count)
+    if snapshot is None or run is None:
+        st.warning(
+            "Для этого периода и источника готовый narrative snapshot не найден. "
+            "Сначала выполни локальную materialization-команду, потом открывай интерфейс."
+        )
+        command = (
+            f"C:\\Users\\79034\\anaconda3\\python.exe -m app materialize-narratives "
+            f"--date-from {date_from_value} --date-to {date_to_value}"
+        )
+        if source_domains:
+            command += f" --source-domains {','.join(source_domains)}"
+        st.code(command)
+        return
 
-        no_clear_count = sum(1 for frame in result.frames if frame.status == "no_clear_narrative")
-        if no_clear_count:
-            st.info(f"Статей без явного нарратива: {no_clear_count}")
+    st.caption(
+        f"Snapshot run #{run.id} от {run.created_at}. "
+        f"Источник: {source_domains_key}. Период: {run.date_from} — {run.date_to}."
+    )
 
-        _render_topics(result)
-        _render_clusters(result)
-        _render_dynamics(result)
+    st.markdown("### Сводка запуска")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Документы", run.documents_count)
+    col2.metric("Темы", run.topics_count)
+    col3.metric("Фреймы", run.frames_count)
+    col4, col5, col6 = st.columns(3)
+    col4.metric("Кластеры", run.clusters_count)
+    col5.metric("Лейблы", run.labels_count)
+    col6.metric("Назначения", run.assignments_count)
 
-        if result.evaluation is not None and result.evaluation.notes:
-            with st.expander("Оценка качества"):
-                for note in result.evaluation.notes:
-                    st.markdown(f"- {note}")
+    frames = list(snapshot.get("frames") or [])
+    no_clear_count = sum(
+        1
+        for frame in frames
+        if isinstance(frame, dict) and frame.get("status") == "no_clear_narrative"
+    )
+    if no_clear_count:
+        st.info(f"Статей без явного нарратива: {no_clear_count}")
+
+    _render_topics(list(snapshot.get("topics") or []))
+    _render_clusters(snapshot)
+    _render_dynamics(snapshot)
+
+    evaluation = snapshot.get("evaluation") if isinstance(snapshot, dict) else None
+    if isinstance(evaluation, dict) and evaluation.get("notes"):
+        with st.expander("Оценка качества"):
+            for note in evaluation.get("notes") or []:
+                st.markdown(f"- {note}")
 
 
 def main() -> None:
     st.set_page_config(page_title="News Intelligence", layout="wide")
     st.title("News Intelligence")
-    st.caption("Локальный интерфейс для анализа новостного корпуса: RAG и narrative intelligence.")
+    st.caption("Локальный интерфейс для анализа новостного корпуса: RAG и готовые narrative snapshots.")
 
     try:
-        connection, services, settings = get_connection_and_services()
+        _connection, services, settings = get_connection_and_services()
     except Exception as exc:
         st.error(f"Не удалось инициализировать приложение: {exc}")
         return
@@ -254,7 +294,7 @@ def main() -> None:
     with rag_tab:
         render_rag(services)
     with narrative_tab:
-        render_narratives(connection, services, settings)
+        render_narratives(services)
 
 
 if __name__ == "__main__":

@@ -4,10 +4,16 @@ from dataclasses import dataclass
 from sqlite3 import Connection
 
 from app.config.settings import Settings
-from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
+from app.repositories import (
+    ArticleChunkRepository,
+    ArticleRepository,
+    NarrativeAnalysisRepository,
+    SourceRepository,
+)
 from app.services import (
     ChunkingService,
     EmbeddingIndexService,
+    NarrativeMaterializationService,
     RAGService,
     build_default_narrative_intelligence_pipeline,
     create_embedding_client,
@@ -20,6 +26,7 @@ class AppServices:
     source_repository: SourceRepository
     article_repository: ArticleRepository
     article_chunk_repository: ArticleChunkRepository
+    narrative_analysis_repository: NarrativeAnalysisRepository
     chunking_service: ChunkingService
     embedding_index_service: EmbeddingIndexService
     rag_service: RAGService
@@ -29,6 +36,7 @@ def build_app_services(connection: Connection, settings: Settings) -> AppService
     source_repository = SourceRepository(connection)
     article_repository = ArticleRepository(connection)
     article_chunk_repository = ArticleChunkRepository(connection)
+    narrative_analysis_repository = NarrativeAnalysisRepository(connection)
 
     llm_client = create_llm_client(settings)
     embedding_client = create_embedding_client(settings)
@@ -51,6 +59,7 @@ def build_app_services(connection: Connection, settings: Settings) -> AppService
         source_repository=source_repository,
         article_repository=article_repository,
         article_chunk_repository=article_chunk_repository,
+        narrative_analysis_repository=narrative_analysis_repository,
         chunking_service=chunking_service,
         embedding_index_service=embedding_index_service,
         rag_service=rag_service,
@@ -72,3 +81,7 @@ def build_narrative_intelligence_services(connection: Connection, settings: Sett
         llm_client=llm_client,
         embedding_client=embedding_client,
     )
+
+
+def build_narrative_materialization_service(connection: Connection) -> NarrativeMaterializationService:
+    return NarrativeMaterializationService(NarrativeAnalysisRepository(connection))

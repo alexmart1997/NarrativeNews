@@ -6,7 +6,7 @@ from datetime import date
 import json
 from pathlib import Path
 
-from app.bootstrap import build_narrative_intelligence_services
+from app.bootstrap import build_narrative_intelligence_services, build_narrative_materialization_service
 from app.config.logging import configure_logging
 from app.config.settings import get_settings
 from app.db.connection import create_connection
@@ -16,7 +16,7 @@ from app.ingestion.fetcher import HttpFetcher
 from app.ingestion.pipeline import BulkIngestionService, IngestionPipeline
 from app.ingestion.sources import SOURCE_CONFIGS, get_source_config
 from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
-from app.services import EmbeddingIndexService, create_embedding_client
+from app.services import EmbeddingIndexService, build_source_domains_key, create_embedding_client
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -83,6 +83,19 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional JSON file path for the full narrative intelligence result.",
+    )
+
+    materialize_parser = subparsers.add_parser(
+        "materialize-narratives",
+        help="Run narrative intelligence locally and save the resulting snapshot into the database.",
+    )
+    materialize_parser.add_argument("--db-path", type=Path, default=None)
+    materialize_parser.add_argument("--date-from", required=True)
+    materialize_parser.add_argument("--date-to", required=True)
+    materialize_parser.add_argument(
+        "--source-domains",
+        default=None,
+        help="Comma-separated source domains, e.g. ria.ru,lenta.ru",
     )
 
     return parser
@@ -207,6 +220,45 @@ def main() -> int:
                     indent=2,
                 )
             )
+        return 0
+
+    if args.command == "materialize-narratives":
+        initialize_database(settings.database_path)
+        source_domains = _parse_source_domains(args.source_domains)
+        source_domains_key = build_source_domains_key(source_domains)
+        with create_connection(settings.database_path) as connection:
+            pipeline = build_narrative_intelligence_services(connection, settings)
+            materialization_service = build_narrative_materialization_service(connection)
+            result = pipeline.run(
+                date_from=args.date_from,
+                date_to=args.date_to,
+                source_domains=source_domains,
+            )
+            run = materialization_service.save_snapshot(
+                source_domains_key=source_domains_key,
+                date_from=args.date_from,
+                date_to=args.date_to,
+                result=result,
+            )
+        print(
+            json.dumps(
+                {
+                    "run_id": run.id,
+                    "source_domains_key": run.source_domains_key,
+                    "date_from": run.date_from,
+                    "date_to": run.date_to,
+                    "documents": run.documents_count,
+                    "topics": run.topics_count,
+                    "frames": run.frames_count,
+                    "clusters": run.clusters_count,
+                    "labels": run.labels_count,
+                    "assignments": run.assignments_count,
+                    "dynamics": run.dynamics_count,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
 
     parser.error(f"Unsupported command: {args.command}")

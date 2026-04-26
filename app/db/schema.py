@@ -78,6 +78,24 @@ CREATE TABLE IF NOT EXISTS article_chunk_embeddings (
     UNIQUE (chunk_id, model_name)
 );
 
+CREATE TABLE IF NOT EXISTS narrative_analysis_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_domains_key TEXT NOT NULL,
+    date_from TEXT NOT NULL,
+    date_to TEXT NOT NULL,
+    status TEXT NOT NULL,
+    documents_count INTEGER NOT NULL DEFAULT 0 CHECK (documents_count >= 0),
+    topics_count INTEGER NOT NULL DEFAULT 0 CHECK (topics_count >= 0),
+    frames_count INTEGER NOT NULL DEFAULT 0 CHECK (frames_count >= 0),
+    clusters_count INTEGER NOT NULL DEFAULT 0 CHECK (clusters_count >= 0),
+    labels_count INTEGER NOT NULL DEFAULT 0 CHECK (labels_count >= 0),
+    assignments_count INTEGER NOT NULL DEFAULT 0 CHECK (assignments_count >= 0),
+    dynamics_count INTEGER NOT NULL DEFAULT 0 CHECK (dynamics_count >= 0),
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at);
 CREATE INDEX IF NOT EXISTS idx_articles_source_id ON articles(source_id);
 CREATE INDEX IF NOT EXISTS idx_articles_is_canonical ON articles(is_canonical);
@@ -86,6 +104,8 @@ CREATE INDEX IF NOT EXISTS idx_articles_duplicate_group_id ON articles(duplicate
 CREATE INDEX IF NOT EXISTS idx_article_chunks_article_id ON article_chunks(article_id);
 CREATE INDEX IF NOT EXISTS idx_article_chunk_embeddings_chunk_id ON article_chunk_embeddings(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_article_chunk_embeddings_model_name ON article_chunk_embeddings(model_name);
+CREATE INDEX IF NOT EXISTS idx_narrative_analysis_runs_lookup
+ON narrative_analysis_runs(source_domains_key, date_from, date_to, created_at DESC);
 
 CREATE TRIGGER IF NOT EXISTS trg_article_chunks_fts_insert
 AFTER INSERT ON article_chunks
