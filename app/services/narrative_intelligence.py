@@ -58,6 +58,8 @@ class NarrativeIntelligenceConfig:
     min_cluster_size: int = 3
     min_cluster_article_support: int = 3
     min_cluster_source_support: int = 1
+    classification_margin: float = 0.08
+    topic_hdbscan_min_cluster_size: int = 12
 
 
 class TopicDiscoveryBackend(ABC):
@@ -217,7 +219,10 @@ class BERTopicTopicDiscoveryBackend(TopicDiscoveryBackend):
             if self.config.topic_reduce_dimensionality
             else None
         )
-        hdbscan_model = HDBSCAN(min_cluster_size=self.config.topic_min_size, metric="euclidean")
+        hdbscan_model = HDBSCAN(
+            min_cluster_size=self.config.topic_hdbscan_min_cluster_size,
+            metric="euclidean",
+        )
         topic_model = BERTopic(
             embedding_model=None,
             umap_model=umap_model,
@@ -423,16 +428,21 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
 class NarrativeFrameTextFormatter:
     @staticmethod
     def to_representation_text(frame: NarrativeFrame) -> str:
-        parts = [
-            f"main_claim: {frame.main_claim or 'n/a'}",
-            f"cause: {frame.cause or 'n/a'}",
-            f"mechanism: {frame.mechanism or 'n/a'}",
-            f"consequence: {frame.consequence or 'n/a'}",
-            f"future_expectation: {frame.future_expectation or 'n/a'}",
-            f"implications: {', '.join(frame.implications) if frame.implications else 'n/a'}",
-            f"actors: {', '.join(frame.actors) if frame.actors else 'n/a'}",
-            f"valence: {frame.valence or 'n/a'}",
-        ]
+        parts = [f"main_claim: {frame.main_claim}"]
+        if frame.cause:
+            parts.append(f"cause: {frame.cause}")
+        if frame.mechanism:
+            parts.append(f"mechanism: {frame.mechanism}")
+        if frame.consequence:
+            parts.append(f"consequence: {frame.consequence}")
+        if frame.future_expectation:
+            parts.append(f"future_expectation: {frame.future_expectation}")
+        if frame.implications:
+            parts.append(f"implications: {', '.join(frame.implications)}")
+        if frame.actors:
+            parts.append(f"actors: {', '.join(frame.actors)}")
+        if frame.valence:
+            parts.append(f"valence: {frame.valence}")
         return "\n".join(parts)
 
 
@@ -489,47 +499,59 @@ class HDBSCANNarrativeClusterBackend(NarrativeClusterBackend):
         if not eligible_embeddings:
             return []
 
-        vectors = [list(embedding.vector) for embedding in eligible_embeddings]
-        clusterer = hdbscan.HDBSCAN(min_cluster_size=self.min_cluster_size, metric="euclidean")
-        labels = clusterer.fit_predict(vectors)
-
-        clusters_by_label: dict[int, list[str]] = defaultdict(list)
-        for embedding, label in zip(eligible_embeddings, labels, strict=False):
-            clusters_by_label[int(label)].append(embedding.frame_id)
-
         clusters: list[NarrativeCluster] = []
-        for label, frame_ids in clusters_by_label.items():
-            if label == -1:
-                continue
+        embeddings_by_topic: dict[str, list[NarrativeFrameEmbedding]] = defaultdict(list)
+        for embedding in eligible_embeddings:
+            frame = frame_by_id[embedding.frame_id]
+            topic_key = frame.topic_id or f"article-{frame.article_id}"
+            embeddings_by_topic[topic_key].append(embedding)
 
-            article_ids = {frame_by_id[frame_id].article_id for frame_id in frame_ids if frame_id in frame_by_id}
-            source_ids = {
-                frame_by_id[frame_id].metadata.get("source_domain")
-                for frame_id in frame_ids
-                if frame_id in frame_by_id
-            }
-            if len(article_ids) < self.min_article_support:
+        cluster_counter = 0
+        for topic_key, topic_embeddings in embeddings_by_topic.items():
+            if len(topic_embeddings) < self.min_cluster_size:
                 continue
-            if len({source_id for source_id in source_ids if source_id}) < self.min_source_support:
-                continue
+            vectors = [list(embedding.vector) for embedding in topic_embeddings]
+            clusterer = hdbscan.HDBSCAN(min_cluster_size=self.min_cluster_size, metric="euclidean")
+            labels = clusterer.fit_predict(vectors)
 
-            topic_ids = Counter(
-                frame_by_id[frame_id].topic_id for frame_id in frame_ids if frame_id in frame_by_id
-            )
-            dominant_topic = topic_ids.most_common(1)[0][0] if topic_ids else None
-            clusters.append(
-                NarrativeCluster(
-                    cluster_id=f"cluster-{label}",
-                    topic_id=dominant_topic,
-                    frame_ids=tuple(frame_ids),
-                    centroid_frame_id=frame_ids[0] if frame_ids else None,
-                    noise=False,
-                    metadata={
-                        "article_support": len(article_ids),
-                        "source_support": len({source_id for source_id in source_ids if source_id}),
-                    },
+            clusters_by_label: dict[int, list[str]] = defaultdict(list)
+            for embedding, label in zip(topic_embeddings, labels, strict=False):
+                clusters_by_label[int(label)].append(embedding.frame_id)
+
+            for label, frame_ids in clusters_by_label.items():
+                if label == -1:
+                    continue
+
+                article_ids = {frame_by_id[frame_id].article_id for frame_id in frame_ids if frame_id in frame_by_id}
+                source_ids = {
+                    frame_by_id[frame_id].metadata.get("source_domain")
+                    for frame_id in frame_ids
+                    if frame_id in frame_by_id
+                }
+                if len(article_ids) < self.min_article_support:
+                    continue
+                if len({source_id for source_id in source_ids if source_id}) < self.min_source_support:
+                    continue
+
+                topic_ids = Counter(
+                    frame_by_id[frame_id].topic_id for frame_id in frame_ids if frame_id in frame_by_id
                 )
-            )
+                dominant_topic = topic_ids.most_common(1)[0][0] if topic_ids else None
+                clusters.append(
+                    NarrativeCluster(
+                        cluster_id=f"cluster-{cluster_counter}",
+                        topic_id=dominant_topic if dominant_topic not in (None, "") else (None if topic_key.startswith("article-") else topic_key),
+                        frame_ids=tuple(frame_ids),
+                        centroid_frame_id=frame_ids[0] if frame_ids else None,
+                        noise=False,
+                        metadata={
+                            "article_support": len(article_ids),
+                            "source_support": len({source_id for source_id in source_ids if source_id}),
+                            "topic_scope": topic_key,
+                        },
+                    )
+                )
+                cluster_counter += 1
         return clusters
 
 
@@ -653,9 +675,11 @@ class HybridNarrativeClassifier(NarrativeClassifier):
     def __init__(
         self,
         threshold: float = 0.78,
+        margin: float = 0.08,
         llm_judge: BaseLLMClient | None = None,
     ) -> None:
         self.threshold = threshold
+        self.margin = margin
         self.llm_judge = llm_judge
 
     def classify_frames(
@@ -689,13 +713,26 @@ class HybridNarrativeClassifier(NarrativeClassifier):
 
             best_cluster_id = None
             best_score = -1.0
+            second_best_score = -1.0
             for cluster_id, centroid_embedding in centroid_embeddings.items():
+                cluster = clusters_by_id.get(cluster_id)
+                if cluster is None:
+                    continue
+                if cluster.topic_id and frame.topic_id and cluster.topic_id != frame.topic_id:
+                    continue
                 score = _cosine_similarity(list(embedding.vector), list(centroid_embedding.vector))
                 if score > best_score:
+                    second_best_score = best_score
                     best_score = score
                     best_cluster_id = cluster_id
+                elif score > second_best_score:
+                    second_best_score = score
 
-            assigned = best_score >= self.threshold and best_cluster_id in clusters_by_id
+            assigned = (
+                best_score >= self.threshold
+                and (best_score - second_best_score) >= self.margin
+                and best_cluster_id in clusters_by_id
+            )
             assignments.append(
                 NarrativeAssignment(
                     article_id=frame.article_id,
@@ -703,7 +740,7 @@ class HybridNarrativeClassifier(NarrativeClassifier):
                     cluster_id=best_cluster_id if assigned else None,
                     similarity_score=max(best_score, 0.0),
                     assigned=assigned,
-                    reason="embedding_similarity" if assigned else "unknown_or_noise",
+                    reason="embedding_similarity" if assigned else "unknown_or_ambiguous",
                 )
             )
         return assignments
@@ -1028,7 +1065,11 @@ def build_default_narrative_intelligence_pipeline(
             min_source_support=resolved_config.min_cluster_source_support,
         ),
         labeler=LLMNarrativeLabeler(llm_client=llm_client, config=resolved_config),
-        classifier=HybridNarrativeClassifier(threshold=resolved_config.classification_threshold, llm_judge=llm_client),
+        classifier=HybridNarrativeClassifier(
+            threshold=resolved_config.classification_threshold,
+            margin=resolved_config.classification_margin,
+            llm_judge=llm_client,
+        ),
         dynamics_analyzer=RollingWindowNarrativeDynamicsAnalyzer(),
         evaluator=NarrativeEvaluatorStub(),
     )
@@ -1061,7 +1102,11 @@ def build_cached_narrative_intelligence_pipeline(
             min_source_support=resolved_config.min_cluster_source_support,
         ),
         labeler=LLMNarrativeLabeler(llm_client=llm_client, config=resolved_config),
-        classifier=HybridNarrativeClassifier(threshold=resolved_config.classification_threshold, llm_judge=llm_client),
+        classifier=HybridNarrativeClassifier(
+            threshold=resolved_config.classification_threshold,
+            margin=resolved_config.classification_margin,
+            llm_judge=llm_client,
+        ),
         dynamics_analyzer=RollingWindowNarrativeDynamicsAnalyzer(),
         evaluator=NarrativeEvaluatorStub(),
     )
@@ -1149,13 +1194,18 @@ def _normalize_topic_text(text: str) -> str:
     cleaned = re.sub(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", " ", cleaned)
     cleaned = re.sub(r"\b\d+\b", " ", cleaned)
     cleaned = re.sub(r"\b[a-z]{1,4}\d+[a-z0-9-]*\b", " ", cleaned)
-    cleaned = re.sub(r"\b[a-z0-9_-]{1,5}\b", " ", cleaned)
+    cleaned = re.sub(r"\b[a-z0-9_-]+\b", " ", cleaned)
     cleaned = re.sub(r"[^\w\s\-а-яё]", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     tokens = [
         token
         for token in cleaned.split()
-        if len(token) >= 3 and token not in RUSSIAN_STOPWORDS and not token.isdigit()
+        if (
+            len(token) >= 3
+            and token not in RUSSIAN_STOPWORDS
+            and not token.isdigit()
+            and not re.fullmatch(r"[a-z0-9_-]+", token)
+        )
     ]
     return " ".join(tokens[:220])
 
