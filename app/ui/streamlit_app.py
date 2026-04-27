@@ -148,11 +148,15 @@ def _render_clusters(snapshot: dict[str, object]) -> None:
         label = labels_by_cluster_id.get(cluster_id)
         title = label.get("title") if isinstance(label, dict) and label.get("title") else cluster_id
         suffix = " [noise]" if cluster.get("noise") else ""
+        metadata = cluster.get("metadata") or {}
+        article_support = metadata.get("article_support", 0) if isinstance(metadata, dict) else 0
+        source_support = metadata.get("source_support", 0) if isinstance(metadata, dict) else 0
         with st.expander(f"{title}{suffix}"):
             st.write(f"**Cluster ID:** {cluster_id}")
             st.write(f"**Тема:** {cluster.get('topic_id') or '—'}")
             st.write(f"**Фреймов в кластере:** {len(cluster.get('frame_ids') or [])}")
-            st.write(f"**Назначений:** {assignments_by_cluster_id.get(cluster_id, 0)}")
+            st.write(f"**Поддержка по статьям:** {article_support or assignments_by_cluster_id.get(cluster_id, 0)}")
+            st.write(f"**Поддержка по источникам:** {source_support or '—'}")
             if label is None:
                 st.info("Лейбл кластера не сформирован.")
                 continue

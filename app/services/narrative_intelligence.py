@@ -242,6 +242,8 @@ class BERTopicTopicDiscoveryBackend(TopicDiscoveryBackend):
                 continue
             keywords = _clean_topic_keywords(topic_model.get_topic(topic_id)[:12])
             if not keywords:
+                keywords = _derive_topic_keywords_from_documents(documents, article_ids)
+            if not keywords:
                 keywords = ("общая тема",)
             topics.append(
                 TopicCandidate(
@@ -628,7 +630,7 @@ class LLMNarrativeLabeler(NarrativeLabeler):
 
     @staticmethod
     def _parse_label(cluster: NarrativeCluster, payload: dict[str, object]) -> NarrativeClusterLabel:
-        return NarrativeClusterLabel(
+        label = NarrativeClusterLabel(
             cluster_id=cluster.cluster_id,
             title=str(payload.get("title", "")).strip(),
             summary=str(payload.get("summary", "")).strip(),
@@ -641,6 +643,9 @@ class LLMNarrativeLabeler(NarrativeLabeler):
             representative_examples=_coerce_string_tuple(payload.get("representative_examples")),
             metadata={"raw_json": payload},
         )
+        if _label_looks_placeholder(label):
+            raise LLMError("Narrative label is placeholder-like.")
+        return label
 
     @staticmethod
     def _fallback_label(
@@ -655,18 +660,22 @@ class LLMNarrativeLabeler(NarrativeLabeler):
         for frame in frames:
             actors.extend(frame.actors)
         unique_actors = tuple(dict.fromkeys(actor for actor in actors if actor))
-        title = canonical_claim[:96]
+        title = _build_cluster_title(frames, canonical_claim)
+        summary = _build_cluster_summary(frames, canonical_claim)
+        causal_chain = _build_cluster_causal_chain(frames)
+        dominant_tone = _dominant_tone(frames)
+        representative_examples = _distinct_non_placeholder(main_claims)[:3]
         return NarrativeClusterLabel(
             cluster_id=cluster.cluster_id,
             title=title or cluster.cluster_id,
-            summary=canonical_claim or "Narrative cluster fallback summary.",
+            summary=summary,
             canonical_claim=canonical_claim,
-            typical_formulations=tuple(main_claims[:3]),
+            typical_formulations=representative_examples,
             key_actors=unique_actors[:6],
-            causal_chain=(),
-            dominant_tone=None,
+            causal_chain=causal_chain,
+            dominant_tone=dominant_tone,
             counter_narrative=None,
-            representative_examples=tuple(main_claims[:3]),
+            representative_examples=representative_examples,
             metadata={"fallback_reason": error},
         )
 
@@ -1233,6 +1242,22 @@ def _topic_label_from_keywords(keywords: tuple[str, ...], topic_id: int) -> str:
     return " / ".join(keywords[:3])
 
 
+def _derive_topic_keywords_from_documents(
+    documents: Sequence[ArticleAnalysisDocument],
+    article_ids: Sequence[int],
+) -> tuple[str, ...]:
+    article_id_set = set(article_ids)
+    token_counts: Counter[str] = Counter()
+    for document in documents:
+        if document.article_id not in article_id_set:
+            continue
+        text = _normalize_topic_text(" ".join([document.title, document.subtitle or "", document.body_text[:400]]))
+        for token in text.split():
+            if len(token) >= 4:
+                token_counts[token] += 1
+    return tuple(token for token, _count in token_counts.most_common(8))
+
+
 def _is_narrative_frame_informative(frame: NarrativeFrame) -> bool:
     if frame.status == "no_clear_narrative":
         return True
@@ -1265,6 +1290,84 @@ def _is_narrative_frame_informative(frame: NarrativeFrame) -> bool:
 
 def _is_cluster_eligible_frame(frame: NarrativeFrame) -> bool:
     return frame.status != "no_clear_narrative" and _is_narrative_frame_informative(frame)
+
+
+def _is_placeholder_text(text: str | None) -> bool:
+    if text is None:
+        return True
+    normalized = text.strip().lower()
+    return normalized in {"", "...", "—", "n/a", "none", "unknown", "общая тема"}
+
+
+def _distinct_non_placeholder(values: Sequence[str]) -> tuple[str, ...]:
+    output: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = value.strip()
+        if _is_placeholder_text(normalized):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        output.append(normalized)
+    return tuple(output)
+
+
+def _dominant_tone(frames: Sequence[NarrativeFrame]) -> str | None:
+    tones = [frame.valence for frame in frames if frame.valence and not _is_placeholder_text(frame.valence)]
+    if not tones:
+        return None
+    return Counter(tones).most_common(1)[0][0]
+
+
+def _build_cluster_causal_chain(frames: Sequence[NarrativeFrame]) -> tuple[str, ...]:
+    causes = _distinct_non_placeholder([frame.cause or "" for frame in frames])
+    mechanisms = _distinct_non_placeholder([frame.mechanism or "" for frame in frames])
+    consequences = _distinct_non_placeholder([frame.consequence or "" for frame in frames])
+    chain: list[str] = []
+    if causes:
+        chain.append(causes[0])
+    if mechanisms:
+        chain.append(mechanisms[0])
+    if consequences:
+        chain.append(consequences[0])
+    return tuple(chain)
+
+
+def _build_cluster_title(frames: Sequence[NarrativeFrame], canonical_claim: str) -> str:
+    implications = _distinct_non_placeholder(
+        [implication for frame in frames for implication in frame.implications]
+    )
+    actors = _distinct_non_placeholder(
+        [actor for frame in frames for actor in frame.actors]
+    )
+    if implications and actors:
+        return f"{implications[0].capitalize()} нарратив: {actors[0]}"
+    if implications:
+        return f"{implications[0].capitalize()} нарратив"
+    if actors:
+        return actors[0][:96]
+    if not _is_placeholder_text(canonical_claim):
+        return canonical_claim[:96]
+    return "Нарративный кластер"
+
+
+def _build_cluster_summary(frames: Sequence[NarrativeFrame], canonical_claim: str) -> str:
+    if not _is_placeholder_text(canonical_claim):
+        return canonical_claim
+    examples = _distinct_non_placeholder([frame.main_claim for frame in frames])
+    if examples:
+        return examples[0]
+    return "Кластер объединяет близкие интерпретационные формулировки."
+
+
+def _label_looks_placeholder(label: NarrativeClusterLabel) -> bool:
+    if _is_placeholder_text(label.title):
+        return True
+    if _is_placeholder_text(label.summary):
+        return True
+    examples = _distinct_non_placeholder(label.representative_examples)
+    return not examples
 
 
 def _serialize_frame(frame: NarrativeFrame) -> dict[str, object]:
