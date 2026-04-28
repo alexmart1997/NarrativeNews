@@ -437,6 +437,67 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(result.source_articles[0].id, target_article.id)
         self.assertTrue(any(chunk.model_rerank_score > 0.5 for chunk in (result.top_chunks or [])))
 
+    def test_narrow_query_requires_direct_lexical_evidence(self) -> None:
+        target_article = self._create_article(
+            title="Block on Telegram discussed in Russia",
+            body_text="Telegram may be blocked in Russia. Officials discuss a possible block on the messenger.",
+            published_at="2026-04-24T10:00:00",
+            source_domain="ria.ru",
+            source_name="RIA",
+        )
+        self._create_article(
+            title="Fake YouTube channels reported by Belarusian media",
+            body_text="Belarusian media reported fake YouTube channels and broader media platform issues.",
+            published_at="2026-04-24T11:00:00",
+            source_domain="lenta.ru",
+            source_name="Lenta",
+        )
+
+        result = self.rag_service.answer(
+            query="telegram blocking in russia",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+            include_debug_chunks=True,
+        )
+
+        self.assertEqual(len(result.source_articles), 1)
+        self.assertEqual(result.source_articles[0].id, target_article.id)
+        self.assertTrue(
+            all(
+                "telegram" in f"{chunk.article_title} {chunk.chunk_text}".lower()
+                for chunk in (result.top_chunks or [])
+            )
+        )
+
+    def test_narrow_query_returns_safe_empty_result_when_no_direct_evidence_exists(self) -> None:
+        self._create_article(
+            title="Fake YouTube channels reported by Belarusian media",
+            body_text="Belarusian media reported fake YouTube channels and broader media platform issues.",
+            published_at="2026-04-24T11:00:00",
+            source_domain="lenta.ru",
+            source_name="Lenta",
+        )
+        self._create_article(
+            title="Tax fraud suspects arrested in Moscow",
+            body_text="Several suspects in a large tax fraud case were arrested in Moscow.",
+            published_at="2026-04-24T12:00:00",
+            source_domain="ria.ru",
+            source_name="RIA",
+        )
+
+        result = self.rag_service.answer(
+            query="telegram blocking in russia",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+            include_debug_chunks=True,
+        )
+
+        self.assertEqual(result.source_articles, [])
+        self.assertEqual(result.top_chunks, [])
+        self.assertTrue(result.summary_text.strip())
+
 
 if __name__ == "__main__":
     unittest.main()

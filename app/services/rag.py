@@ -84,6 +84,28 @@ BROAD_TERMS = {
     "украины",
     "украину",
 }
+ACTION_TERMS = {
+    "????????????????????????",
+    "????????????????????????????????",
+    "?????????????????????????",
+    "??????????????????????????????????",
+    "?????????????????????????????",
+    "?????????????????????????????",
+    "?????????????????????????????????",
+    "?????????????????????????????????????????",
+    "????????????????",
+    "?????????????????????",
+    "?????????????????????",
+    "????????????????????????",
+    "block",
+    "blocking",
+    "ban",
+    "banned",
+    "restrict",
+    "restriction",
+    "restrictions",
+    "arrest",
+}
 RUSSIAN_ENDINGS = (
     "иями",
     "ями",
@@ -497,6 +519,8 @@ class RAGService:
             return []
 
         anchor_terms = self._anchor_terms(query_terms)
+        is_narrow_query = self._is_narrow_query(query_terms)
+        required_anchor_matches = 2 if is_narrow_query and len(anchor_terms) >= 2 else 1
         strict_matches: list[ChunkSearchResult] = []
         semantic_matches: list[ChunkSearchResult] = []
         fallback_matches: list[ChunkSearchResult] = []
@@ -510,8 +534,19 @@ class RAGService:
 
             overlap = self._token_overlap_score(query_terms, chunk.article_title, chunk.chunk_text)
             anchor_score = self._anchor_overlap_score(anchor_terms, chunk.article_title, chunk.chunk_text)
+            anchor_match_count = self._anchor_match_count(anchor_terms, chunk.article_title, chunk.chunk_text)
             if anchor_score > 0:
                 anchor_present = True
+
+            if is_narrow_query and anchor_terms:
+                if anchor_match_count >= required_anchor_matches and (overlap >= 0.40 or chunk.vector_score >= 0.55):
+                    strict_matches.append(chunk)
+                    strict_ids.add(chunk.chunk_id)
+                    continue
+                if anchor_match_count >= required_anchor_matches and chunk.vector_score >= 0.72:
+                    semantic_matches.append(chunk)
+                    continue
+                continue
 
             if overlap >= 0.50 or anchor_score >= 0.50:
                 strict_matches.append(chunk)
@@ -531,6 +566,8 @@ class RAGService:
 
         if strict_matches:
             return strict_matches + [item for item in semantic_matches if item.chunk_id not in strict_ids]
+        if is_narrow_query:
+            return []
         if anchor_terms and anchor_present:
             return semantic_matches
         if semantic_matches:
@@ -675,6 +712,21 @@ class RAGService:
         haystack_values = {term["raw"] for term in haystack_terms} | {term["normalized"] for term in haystack_terms}
         matches = sum(1 for term in anchor_terms if term in haystack_values)
         return matches / len(anchor_terms)
+
+    def _anchor_match_count(self, anchor_terms: set[str], title: str, chunk_text: str) -> int:
+        if not anchor_terms:
+            return 0
+        haystack_terms = self._extract_query_terms(f"{title} {chunk_text}")
+        haystack_values = {term["raw"] for term in haystack_terms} | {term["normalized"] for term in haystack_terms}
+        return sum(1 for term in anchor_terms if term in haystack_values)
+
+    def _is_narrow_query(self, query_terms: list[dict[str, str]]) -> bool:
+        if len(query_terms) < 2:
+            return False
+        anchor_terms = self._anchor_terms(query_terms)
+        if len(anchor_terms) < 2:
+            return False
+        return any(term["normalized"] in ACTION_TERMS for term in query_terms)
 
     def _diversify_chunks(self, chunks: list[ChunkSearchResult], *, max_per_article: int) -> list[ChunkSearchResult]:
         diversified: list[ChunkSearchResult] = []
