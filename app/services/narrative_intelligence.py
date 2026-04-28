@@ -312,6 +312,9 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
             "A narrative is a causal-emotional interpretive story: what happens, who acts, why it happens, "
             "how it happens, what consequences follow, what future expectation is formed, and what implication "
             "or evaluative tone is present. "
+            "Do not treat isolated event reports, sports results, personnel updates, ceremonial coverage, "
+            "weather updates, flight restrictions, air-raid alerts, or operational bulletins as narratives unless "
+            "the text explicitly builds an interpretive causal frame with implications or expectations. "
             "Return valid JSON only. "
             "If a text has no clear narrative, return a single frame with status='no_clear_narrative'."
         )
@@ -348,6 +351,8 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
             "Rules:\n"
             "- do not summarize the article\n"
             "- extract interpretation, not just facts\n"
+            "- do not return sports match results, staff reshuffles, one-off incidents, alerts, or ceremonial reports as narratives unless they are explicitly framed as evidence of a broader process\n"
+            "- if the text only states what happened, who won, who was appointed, where an alert was declared, or what restrictions were introduced, return no_clear_narrative\n"
             "- support multi-frame extraction\n"
             "- if no clear narrative exists, return one frame with status='no_clear_narrative'\n\n"
             f"Topic hints:\n{topic_block}\n\n"
@@ -1264,6 +1269,35 @@ def _is_narrative_frame_informative(frame: NarrativeFrame) -> bool:
     if len(frame.main_claim.strip()) < 40:
         return False
     lower_claim = frame.main_claim.lower()
+    if any(
+        fragment in lower_claim
+        for fragment in (
+            "выиграл",
+            "выиграла",
+            "обыграл",
+            "обыграла",
+            "завоевал",
+            "завоевала",
+            "занял должность",
+            "временно занял",
+            "временно уехал",
+            "воздушная тревога",
+            "беспилотной опасности",
+            "ограничения на прием и выпуск",
+            "временные ограничения",
+            "богослужение",
+            "турнир",
+            "матч",
+            "тренер",
+        )
+    ):
+        structure_count = sum(
+            1
+            for value in (frame.cause, frame.mechanism, frame.consequence, frame.future_expectation)
+            if value and len(value.strip()) >= 16
+        )
+        if structure_count < 3:
+            return False
     if any(
         fragment in lower_claim
         for fragment in (

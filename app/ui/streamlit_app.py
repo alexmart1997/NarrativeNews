@@ -87,19 +87,6 @@ def _format_keywords(keywords: list[str] | tuple[str, ...]) -> str:
     return ", ".join(keyword for keyword in keywords if keyword) or "—"
 
 
-def _render_topics(topics: list[dict[str, object]]) -> None:
-    st.markdown("### Темы")
-    if not topics:
-        st.info("Темы не выделены.")
-        return
-    for topic in topics[:12]:
-        article_ids = topic.get("article_ids") or []
-        keywords = topic.get("keywords") or []
-        with st.expander(f"{topic.get('label', 'topic')} ({len(article_ids)} статей)"):
-            st.write(f"**ID:** {topic.get('topic_id', '—')}")
-            st.write(f"**Ключевые слова:** {_format_keywords(keywords)}")
-
-
 def _render_clusters(snapshot: dict[str, object]) -> None:
     st.markdown("### Нарративные кластеры")
     clusters = list(snapshot.get("clusters") or [])
@@ -267,7 +254,7 @@ def render_narratives(services) -> None:
     st.markdown("### Сводка запуска")
     col1, col2, col3 = st.columns(3)
     col1.metric("Документы", run.documents_count)
-    col2.metric("Темы", run.topics_count)
+    col2.metric("Topic-кандидаты", run.topics_count)
     col3.metric("Фреймы", run.frames_count)
     col4, col5, col6 = st.columns(3)
     col4.metric("Кластеры", run.clusters_count)
@@ -283,9 +270,21 @@ def render_narratives(services) -> None:
     if no_clear_count:
         st.info(f"Статей без явного нарратива: {no_clear_count}")
 
-    _render_topics(list(snapshot.get("topics") or []))
     _render_clusters(snapshot)
     _render_dynamics(snapshot)
+
+    with st.expander("Технические topic-кандидаты"):
+        topics = list(snapshot.get("topics") or [])
+        if not topics:
+            st.info("Topic-кандидаты не выделены.")
+        else:
+            st.caption("Этот блок показывает внутренний результат topic discovery и не является финальным пользовательским выводом.")
+            for topic in topics[:12]:
+                article_ids = topic.get("article_ids") or []
+                keywords = topic.get("keywords") or []
+                with st.expander(f"{topic.get('label', 'topic')} ({len(article_ids)} статей)"):
+                    st.write(f"**ID:** {topic.get('topic_id', '—')}")
+                    st.write(f"**Ключевые слова:** {_format_keywords(keywords)}")
 
     evaluation = snapshot.get("evaluation") if isinstance(snapshot, dict) else None
     if isinstance(evaluation, dict) and evaluation.get("notes"):
