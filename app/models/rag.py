@@ -46,6 +46,7 @@ class ChunkSearchResult:
     match_score: float = 0.0
     lexical_score: float = 0.0
     vector_score: float = 0.0
+    model_rerank_score: float = 0.0
     rerank_score: float = 0.0
     final_score: float = 0.0
 

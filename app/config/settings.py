@@ -26,6 +26,10 @@ class Settings:
     embedding_timeout_seconds: float = 30.0
     rag_hybrid_limit: int = 24
     rag_rerank_limit: int = 8
+    rag_reranker_backend: str = "none"
+    rag_reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
+    rag_reranker_batch_size: int = 8
+    rag_reranker_max_length: int = 512
 
 
 @lru_cache(maxsize=1)
@@ -44,6 +48,10 @@ def _cached_settings() -> Settings:
     embedding_timeout_seconds = float(os.getenv("NARRATIVE_NEWS_EMBEDDING_TIMEOUT", "30"))
     rag_hybrid_limit = int(os.getenv("NARRATIVE_NEWS_RAG_HYBRID_LIMIT", "24"))
     rag_rerank_limit = int(os.getenv("NARRATIVE_NEWS_RAG_RERANK_LIMIT", "8"))
+    rag_reranker_backend = os.getenv("NARRATIVE_NEWS_RAG_RERANKER_BACKEND", "none")
+    rag_reranker_model_name = os.getenv("NARRATIVE_NEWS_RAG_RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
+    rag_reranker_batch_size = int(os.getenv("NARRATIVE_NEWS_RAG_RERANKER_BATCH_SIZE", "8"))
+    rag_reranker_max_length = int(os.getenv("NARRATIVE_NEWS_RAG_RERANKER_MAX_LENGTH", "512"))
     return Settings(
         database_path=database_path,
         log_level=log_level,
@@ -59,6 +67,10 @@ def _cached_settings() -> Settings:
         embedding_timeout_seconds=embedding_timeout_seconds,
         rag_hybrid_limit=rag_hybrid_limit,
         rag_rerank_limit=rag_rerank_limit,
+        rag_reranker_backend=rag_reranker_backend,
+        rag_reranker_model_name=rag_reranker_model_name,
+        rag_reranker_batch_size=rag_reranker_batch_size,
+        rag_reranker_max_length=rag_reranker_max_length,
     )
 
 
@@ -89,4 +101,8 @@ def get_settings(database_path: Path | None = None) -> Settings:
         embedding_timeout_seconds=base_settings.embedding_timeout_seconds,
         rag_hybrid_limit=base_settings.rag_hybrid_limit,
         rag_rerank_limit=base_settings.rag_rerank_limit,
+        rag_reranker_backend=base_settings.rag_reranker_backend,
+        rag_reranker_model_name=base_settings.rag_reranker_model_name,
+        rag_reranker_batch_size=base_settings.rag_reranker_batch_size,
+        rag_reranker_max_length=base_settings.rag_reranker_max_length,
     )

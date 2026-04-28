@@ -7,6 +7,7 @@ import re
 from app.models import Article, ChunkSearchResult, RAGAnswerResult
 from app.repositories import ArticleChunkRepository, ArticleRepository
 from app.services.llm import BaseEmbeddingClient, BaseLLMClient
+from app.services.reranker import BaseChunkReranker
 
 
 TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]{2,}")
@@ -149,6 +150,7 @@ class RAGService:
         article_repository: ArticleRepository,
         llm_client: BaseLLMClient | None = None,
         embedding_client: BaseEmbeddingClient | None = None,
+        reranker: BaseChunkReranker | None = None,
         hybrid_limit: int = 24,
         rerank_limit: int = 8,
     ) -> None:
@@ -156,6 +158,7 @@ class RAGService:
         self.article_repository = article_repository
         self.llm_client = llm_client
         self.embedding_client = embedding_client
+        self.reranker = reranker
         self.hybrid_limit = hybrid_limit
         self.rerank_limit = rerank_limit
 
@@ -368,6 +371,52 @@ class RAGService:
             return []
 
         initial = candidates[:limit]
+        reranked = self._model_rerank(query, initial)
+        reranked = self._llm_listwise_rerank(query, reranked)
+        return reranked[:limit]
+
+    def _model_rerank(
+        self,
+        query: str,
+        candidates: list[ChunkSearchResult],
+    ) -> list[ChunkSearchResult]:
+        if not candidates or self.reranker is None:
+            return candidates
+
+        try:
+            scores = self.reranker.score(query, candidates)
+        except Exception:
+            return candidates
+        if len(scores) != len(candidates):
+            return candidates
+
+        reranked: list[ChunkSearchResult] = []
+        for candidate, score in zip(candidates, scores, strict=False):
+            reranked.append(
+                replace(
+                    candidate,
+                    model_rerank_score=score,
+                    final_score=candidate.final_score + (0.42 * score),
+                )
+            )
+        reranked.sort(
+            key=lambda item: (
+                item.model_rerank_score,
+                item.final_score,
+                item.lexical_score,
+                item.vector_score,
+                item.published_at,
+            ),
+            reverse=True,
+        )
+        return reranked
+
+    def _llm_listwise_rerank(
+        self,
+        query: str,
+        candidates: list[ChunkSearchResult],
+    ) -> list[ChunkSearchResult]:
+        initial = candidates
         if self.llm_client is None:
             return initial
 
@@ -428,10 +477,16 @@ class RAGService:
             if item.chunk_id not in used:
                 reranked.append(item)
         reranked.sort(
-            key=lambda item: (item.rerank_score, item.final_score, item.lexical_score, item.vector_score),
+            key=lambda item: (
+                item.rerank_score,
+                item.model_rerank_score,
+                item.final_score,
+                item.lexical_score,
+                item.vector_score,
+            ),
             reverse=True,
         )
-        return reranked[:limit]
+        return reranked
 
     def _filter_topical_chunks(
         self,

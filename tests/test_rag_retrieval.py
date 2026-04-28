@@ -10,6 +10,7 @@ from app.db.schema import create_schema
 from app.models import ArticleCreate, SourceCreate
 from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
 from app.services import BaseEmbeddingClient, BaseLLMClient, ChunkingService, EmbeddingIndexService, RAGService
+from app.services.reranker import BaseChunkReranker
 
 
 class MockLLMClient(BaseLLMClient):
@@ -60,6 +61,22 @@ class MockEmbeddingClient(BaseEmbeddingClient):
         return [0.2, 0.2]
 
 
+class MockReranker(BaseChunkReranker):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def score(self, query: str, candidates: list) -> list[float]:
+        self.calls.append((query, len(candidates)))
+        scores: list[float] = []
+        for candidate in candidates:
+            text = f"{candidate.article_title} {candidate.chunk_text}".lower()
+            if "тегеран" in text or "иран" in text:
+                scores.append(0.95)
+            else:
+                scores.append(0.10)
+        return scores
+
+
 class RetrievalTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = Path("tests") / ".tmp" / f"retrieval-{uuid.uuid4().hex}"
@@ -73,12 +90,14 @@ class RetrievalTests(unittest.TestCase):
         self.chunking_service = ChunkingService()
         self.mock_llm = MockLLMClient()
         self.mock_embedding = MockEmbeddingClient()
+        self.mock_reranker = MockReranker()
         self.embedding_index_service = EmbeddingIndexService(self.chunk_repo, self.mock_embedding)
         self.rag_service = RAGService(
             self.chunk_repo,
             self.article_repo,
             llm_client=self.mock_llm,
             embedding_client=self.mock_embedding,
+            reranker=self.mock_reranker,
             hybrid_limit=12,
             rerank_limit=5,
         )
@@ -387,6 +406,36 @@ class RetrievalTests(unittest.TestCase):
         self.assertGreaterEqual(len(result.source_articles), 1)
         self.assertEqual(result.source_articles[0].id, useful_article.id)
         self.assertTrue(all("Ваш браузер не поддерживает" not in chunk.chunk_text for chunk in (result.top_chunks or [])))
+
+    def test_model_reranker_scores_candidates_before_llm_polish(self) -> None:
+        target_article = self._create_article(
+            title="Тегеран сделал заявление",
+            body_text="Тегеран сделал важное заявление по ядерной сделке и региональной безопасности.",
+            published_at="2026-04-23T10:00:00",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+        )
+        self._create_article(
+            title="Случайная новость",
+            body_text="В Москве прошла выставка и открылась новая площадка для мероприятий.",
+            published_at="2026-04-23T11:00:00",
+            source_domain="ria.ru",
+            source_name="РИА Новости",
+        )
+
+        result = self.rag_service.answer(
+            query="иран",
+            date_from="2026-04-01T00:00:00",
+            date_to="2026-04-30T23:59:59",
+            limit=5,
+            include_debug_chunks=True,
+            source_domains=["ria.ru"],
+        )
+
+        self.assertGreaterEqual(len(self.mock_reranker.calls), 1)
+        self.assertGreaterEqual(len(result.source_articles), 1)
+        self.assertEqual(result.source_articles[0].id, target_article.id)
+        self.assertTrue(any(chunk.model_rerank_score > 0.5 for chunk in (result.top_chunks or [])))
 
 
 if __name__ == "__main__":

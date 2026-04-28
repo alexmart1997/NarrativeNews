@@ -86,6 +86,31 @@ def render_rag(services) -> None:
 def _format_keywords(keywords: list[str] | tuple[str, ...]) -> str:
     return ", ".join(keyword for keyword in keywords if keyword) or "—"
 
+def _looks_like_event_label(label: dict[str, object] | None) -> bool:
+    if not isinstance(label, dict):
+        return False
+    text = " ".join(str(label.get(field) or "").lower() for field in ("title", "summary", "canonical_claim"))
+    if not text.strip():
+        return True
+    return any(
+        fragment in text
+        for fragment in (
+            "заявил",
+            "заявила",
+            "считает",
+            "сообщил",
+            "сообщила",
+            "воздушная тревога",
+            "временные ограничения",
+            "беспилотной опасности",
+            "выиграл",
+            "выиграла",
+            "временно",
+        )
+    )
+
+
+
 
 def _render_clusters(snapshot: dict[str, object]) -> None:
     st.markdown("### Нарративные кластеры")
@@ -123,6 +148,8 @@ def _render_clusters(snapshot: dict[str, object]) -> None:
         if cluster.get("noise"):
             continue
         if max(assignment_count, article_support) < 3:
+            continue
+        if _looks_like_event_label(labels_by_cluster_id.get(cluster_id)):
             continue
         strong_clusters.append(cluster)
 
@@ -278,13 +305,13 @@ def render_narratives(services) -> None:
         if not topics:
             st.info("Topic-кандидаты не выделены.")
         else:
-            st.caption("Этот блок показывает внутренний результат topic discovery и не является финальным пользовательским выводом.")
             for topic in topics[:12]:
                 article_ids = topic.get("article_ids") or []
                 keywords = topic.get("keywords") or []
-                with st.expander(f"{topic.get('label', 'topic')} ({len(article_ids)} статей)"):
-                    st.write(f"**ID:** {topic.get('topic_id', '—')}")
-                    st.write(f"**Ключевые слова:** {_format_keywords(keywords)}")
+                st.markdown(f"**{topic.get('label', 'topic')} ({len(article_ids)} articles)**")
+                st.write(f"ID: {topic.get('topic_id', '-')}")
+                st.write(f"Keywords: {_format_keywords(keywords)}")
+
 
     evaluation = snapshot.get("evaluation") if isinstance(snapshot, dict) else None
     if isinstance(evaluation, dict) and evaluation.get("notes"):

@@ -56,7 +56,7 @@ class NarrativeIntelligenceConfig:
     min_topic_text_characters: int = 160
     min_narrative_claim_characters: int = 40
     min_cluster_size: int = 3
-    min_cluster_article_support: int = 3
+    min_cluster_article_support: int = 5
     min_cluster_source_support: int = 1
     classification_margin: float = 0.08
     topic_hdbscan_min_cluster_size: int = 12
@@ -387,7 +387,13 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
             implications=implications,
             representative_quotes=quotes,
             confidence=confidence_value,
-            metadata={"raw_json": raw_frame, "source_domain": document.source_domain},
+            metadata={
+                "raw_json": raw_frame,
+                "source_domain": document.source_domain,
+                "published_at": document.published_at,
+                "article_title": document.title,
+                "category": document.category,
+            },
         )
         if not _is_narrative_frame_informative(frame):
             if frame.status == "no_clear_narrative":
@@ -428,7 +434,13 @@ class LLMNarrativeFrameExtractor(NarrativeFrameExtractor):
             implications=(),
             representative_quotes=(),
             confidence=None,
-            metadata={"fallback_reason": error, "source_domain": document.source_domain},
+            metadata={
+                "fallback_reason": error,
+                "source_domain": document.source_domain,
+                "published_at": document.published_at,
+                "article_title": document.title,
+                "category": document.category,
+            },
         )
 
 
@@ -538,6 +550,9 @@ class HDBSCANNarrativeClusterBackend(NarrativeClusterBackend):
                 if len(article_ids) < self.min_article_support:
                     continue
                 if len({source_id for source_id in source_ids if source_id}) < self.min_source_support:
+                    continue
+                cluster_frames = [frame_by_id[frame_id] for frame_id in frame_ids if frame_id in frame_by_id]
+                if _is_cluster_event_like(cluster_frames):
                     continue
 
                 topic_ids = Counter(
@@ -1319,11 +1334,86 @@ def _is_narrative_frame_informative(frame: NarrativeFrame) -> bool:
     )
     actor_score = 1 if frame.actors else 0
     implication_score = 1 if frame.implications else 0
+    if _is_statement_like_claim(lower_claim):
+        has_forward_interpretation = bool(frame.future_expectation) and bool(frame.implications)
+        if not has_forward_interpretation:
+            return False
+    if _is_operational_update_claim(lower_claim):
+        has_broader_frame = implication_score > 0 and bool(frame.future_expectation)
+        if structure_score < 3 or not has_broader_frame:
+            return False
     return (structure_score + actor_score + implication_score) >= 2
 
 
 def _is_cluster_eligible_frame(frame: NarrativeFrame) -> bool:
     return frame.status != "no_clear_narrative" and _is_narrative_frame_informative(frame)
+
+
+def _is_statement_like_claim(text: str) -> bool:
+    return any(
+        verb in text
+        for verb in (
+            " заявил",
+            " заявила",
+            " сказа",
+            " сообщил",
+            " сообщила",
+            " считает",
+            " назвал",
+            " назвала",
+            " обвинил",
+            " обвинила",
+            " призвал",
+            " призвала",
+            " отметил",
+            " отметила",
+            " подчеркнул",
+            " подчеркнула",
+            " указал",
+            " указала",
+            " допустил",
+            " допустила",
+        )
+    )
+
+
+def _is_operational_update_claim(text: str) -> bool:
+    return any(
+        fragment in text
+        for fragment in (
+            "воздушная тревога",
+            "беспилотной опасности",
+            "временные ограничения",
+            "ограничения на прием",
+            "ограничения на выпуск",
+            "в аэропортах",
+            "выиграл",
+            "выиграла",
+            "назначен",
+            "назначена",
+            "временно",
+            "объявлен",
+            "объявлена",
+            "сняты",
+            "сняли",
+        )
+    )
+
+
+def _is_cluster_event_like(frames: Sequence[NarrativeFrame]) -> bool:
+    if not frames:
+        return True
+    claims = [frame.main_claim.lower() for frame in frames if frame.main_claim.strip()]
+    if not claims:
+        return True
+    statement_ratio = sum(1 for claim in claims if _is_statement_like_claim(claim)) / len(claims)
+    operational_ratio = sum(1 for claim in claims if _is_operational_update_claim(claim)) / len(claims)
+    broad_frame_ratio = sum(
+        1
+        for frame in frames
+        if frame.implications and frame.future_expectation and not _is_placeholder_text(frame.future_expectation)
+    ) / len(frames)
+    return (statement_ratio >= 0.7 or operational_ratio >= 0.7) and broad_frame_ratio < 0.35
 
 
 def _is_placeholder_text(text: str | None) -> bool:

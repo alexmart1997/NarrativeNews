@@ -12,12 +12,14 @@ from app.repositories import (
     SourceRepository,
 )
 from app.services import (
+    BaseChunkReranker,
     ChunkingService,
     EmbeddingIndexService,
     NarrativeMaterializationService,
     RAGService,
     build_cached_narrative_intelligence_pipeline,
     build_default_narrative_intelligence_pipeline,
+    create_reranker,
     create_embedding_client,
     create_llm_client,
 )
@@ -44,6 +46,11 @@ def build_app_services(connection: Connection, settings: Settings) -> AppService
 
     llm_client = create_llm_client(settings)
     embedding_client = create_embedding_client(settings)
+    reranker: BaseChunkReranker | None = None
+    try:
+        reranker = create_reranker(settings)
+    except Exception:
+        reranker = None
 
     chunking_service = ChunkingService()
     embedding_index_service = EmbeddingIndexService(
@@ -55,6 +62,7 @@ def build_app_services(connection: Connection, settings: Settings) -> AppService
         article_repository=article_repository,
         llm_client=llm_client,
         embedding_client=embedding_client,
+        reranker=reranker,
         hybrid_limit=settings.rag_hybrid_limit,
         rerank_limit=settings.rag_rerank_limit,
     )

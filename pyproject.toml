@@ -11,6 +11,8 @@ streamlit = ">=1.35"
 bertopic = ">=0.17.4"
 hdbscan = ">=0.8.42"
 umap-learn = ">=0.5.12"
+transformers = ">=4.51"
+torch = ">=2.2"
 
 [tool.poetry.group.dev.dependencies]
 

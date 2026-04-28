@@ -46,10 +46,18 @@ from app.services.narrative_materialization import (
     build_source_domains_key,
 )
 from app.services.rag import RAGSearchResult, RAGService
+from app.services.reranker import (
+    BaseChunkReranker,
+    CrossEncoderChunkReranker,
+    CrossEncoderRerankerConfig,
+    RerankerError,
+    create_reranker,
+)
 
 __all__ = [
     "ArticleNormalizer",
     "BaseEmbeddingClient",
+    "BaseChunkReranker",
     "BaseLLMClient",
     "CachedNarrativeIntelligencePipeline",
     "ChunkingConfig",
@@ -65,6 +73,8 @@ __all__ = [
     "LocalLlamaConfig",
     "BERTopicTopicDiscoveryBackend",
     "CorpusArticlePreprocessor",
+    "CrossEncoderChunkReranker",
+    "CrossEncoderRerankerConfig",
     "NormalizedArticle",
     "EmbeddingNarrativeBackend",
     "HDBSCANNarrativeClusterBackend",
@@ -87,11 +97,13 @@ __all__ = [
     "NarrativeLabeler",
     "RAGSearchResult",
     "RAGService",
+    "RerankerError",
     "RollingWindowNarrativeDynamicsAnalyzer",
     "TopicDiscoveryBackend",
     "build_cached_narrative_intelligence_pipeline",
     "build_default_narrative_intelligence_pipeline",
     "build_source_domains_key",
+    "create_reranker",
     "create_embedding_client",
     "create_llm_client",
 ]

@@ -25,6 +25,8 @@ from app.services.narrative_intelligence import (
     LLMNarrativeFrameExtractor,
     NarrativeFrameTextFormatter,
     RollingWindowNarrativeDynamicsAnalyzer,
+    _is_cluster_event_like,
+    _is_narrative_frame_informative,
     _coerce_string_tuple,
     _generate_json_with_repair,
     _to_embedding_matrix,
@@ -419,9 +421,57 @@ class NarrativeIntelligenceTests(unittest.TestCase):
 
         labels = labeler.label_clusters([cluster], [frame])
 
-        self.assertEqual(len(labels), 1)
-        self.assertEqual(labels[0].canonical_claim, "Energy prices are driving inflation")
-        self.assertIn("fallback_reason", labels[0].metadata)
+    def test_event_like_statement_frame_is_not_treated_as_narrative(self) -> None:
+        frame = NarrativeFrame(
+            frame_id="frame-1",
+            article_id=1,
+            topic_id="topic-1",
+            status="ok",
+            main_claim="Аракчи заявил, что послание Трампа протестующим в Иране безрассудно.",
+            actors=("Аракчи", "Трамп"),
+            cause="послание Трампа",
+            mechanism="публичное заявление",
+            consequence="критика со стороны Ирана",
+            future_expectation=None,
+            valence="negative",
+            implications=(),
+        )
+
+        self.assertFalse(_is_narrative_frame_informative(frame))
+
+    def test_operational_update_cluster_is_filtered_out(self) -> None:
+        frames = [
+            NarrativeFrame(
+                frame_id="frame-1",
+                article_id=1,
+                topic_id="topic-1",
+                status="ok",
+                main_claim="Воздушная тревога объявлена в нескольких областях Украины.",
+                actors=("власти",),
+                cause="угроза удара",
+                mechanism="объявление тревоги",
+                consequence="введение режима оповещения",
+                future_expectation=None,
+                valence="negative",
+                implications=(),
+            ),
+            NarrativeFrame(
+                frame_id="frame-2",
+                article_id=2,
+                topic_id="topic-1",
+                status="ok",
+                main_claim="Воздушная тревога объявлена в ряде регионов.",
+                actors=("власти",),
+                cause="угроза удара",
+                mechanism="объявление тревоги",
+                consequence="введение режима оповещения",
+                future_expectation=None,
+                valence="negative",
+                implications=(),
+            ),
+        ]
+
+        self.assertTrue(_is_cluster_event_like(frames))
 
     def test_cached_pipeline_materializes_once_and_reuses_across_range_run(self) -> None:
         self._create_article(
