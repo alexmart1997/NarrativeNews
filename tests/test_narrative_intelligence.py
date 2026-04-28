@@ -16,6 +16,7 @@ from app.models.narrative_intelligence import (
 )
 from app.repositories import ArticleChunkRepository, ArticleRepository, SourceRepository
 from app.services.chunking import ChunkingService
+from app.services.llm import EmbeddingError
 from app.services.narrative_intelligence import (
     CachedNarrativeIntelligencePipeline,
     CorpusArticlePreprocessor,
@@ -42,6 +43,23 @@ class StubEmbeddingClient:
         if "inflation" in lowered:
             return [1.0, 0.0]
         return [0.0, 1.0]
+
+
+class FallbackEmbeddingClient:
+    model_name = "fallback-embed"
+
+    def __init__(self, fail_full: bool = True, fail_compact: bool = False) -> None:
+        self.fail_full = fail_full
+        self.fail_compact = fail_compact
+        self.calls: list[str] = []
+
+    def embed_text(self, text: str) -> list[float]:
+        self.calls.append(text)
+        if text.startswith("main_claim:") and self.fail_full:
+            raise EmbeddingError("Local embedding server returned HTTP 500: {\"error\":\"failed to encode response: json: unsupported value: NaN\"}")
+        if not text.startswith("main_claim:") and self.fail_compact:
+            raise EmbeddingError("Local embedding server returned HTTP 500: {\"error\":\"failed to encode response: json: unsupported value: NaN\"}")
+        return [0.5, 0.5]
 
 
 class SequenceLLMClient:
@@ -204,6 +222,53 @@ class NarrativeIntelligenceTests(unittest.TestCase):
         self.assertEqual(outputs[0].frame_id, "frame-1")
         self.assertEqual(outputs[0].model_name, "stub-embed")
         self.assertEqual(outputs[0].vector, (1.0, 0.0))
+
+    def test_embedding_backend_falls_back_to_compact_representation_on_embedding_error(self) -> None:
+        frame = NarrativeFrame(
+            frame_id="frame-1",
+            article_id=1,
+            topic_id="topic-1",
+            status="ok",
+            main_claim="Inflation is accelerating",
+            actors=("Central bank",),
+            cause="tariff growth",
+            mechanism="prices rise",
+            consequence="inflation pressures",
+            future_expectation="inflation remains elevated",
+            valence="negative",
+            implications=("economic",),
+        )
+
+        client = FallbackEmbeddingClient()
+        backend = EmbeddingNarrativeBackend(embedding_client=client)
+        outputs = backend.encode_frames([frame])
+
+        self.assertEqual(len(outputs), 1)
+        self.assertEqual(outputs[0].vector, (0.5, 0.5))
+        self.assertNotIn("main_claim:", outputs[0].representation_text)
+        self.assertEqual(len(client.calls), 2)
+
+    def test_embedding_backend_skips_frame_when_full_and_compact_embedding_fail(self) -> None:
+        frame = NarrativeFrame(
+            frame_id="frame-1",
+            article_id=1,
+            topic_id="topic-1",
+            status="ok",
+            main_claim="Inflation is accelerating",
+            actors=("Central bank",),
+            cause="tariff growth",
+            mechanism="prices rise",
+            consequence="inflation pressures",
+            future_expectation="inflation remains elevated",
+            valence="negative",
+            implications=("economic",),
+        )
+
+        client = FallbackEmbeddingClient(fail_full=True, fail_compact=True)
+        backend = EmbeddingNarrativeBackend(embedding_client=client)
+        outputs = backend.encode_frames([frame])
+
+        self.assertEqual(outputs, [])
 
     def test_classifier_supports_unknown_frames(self) -> None:
         frame = NarrativeFrame(

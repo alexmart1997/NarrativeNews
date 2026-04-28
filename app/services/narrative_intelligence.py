@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 import json
+import logging
 import re
 from statistics import mean
 from typing import Iterable, Sequence
@@ -29,7 +30,9 @@ from app.repositories import (
     NarrativeArticleAnalysisRepository,
     SourceRepository,
 )
-from app.services.llm import BaseEmbeddingClient, BaseLLMClient, LLMError, _parse_json_object
+from app.services.llm import BaseEmbeddingClient, BaseLLMClient, EmbeddingError, LLMError, _parse_json_object
+
+logger = logging.getLogger(__name__)
 
 
 class NarrativeIntelligenceError(RuntimeError):
@@ -464,6 +467,26 @@ class NarrativeFrameTextFormatter:
             parts.append(f"valence: {frame.valence}")
         return "\n".join(parts)
 
+    @staticmethod
+    def to_compact_representation_text(frame: NarrativeFrame, max_length: int = 1200) -> str:
+        parts: list[str] = []
+        for value in (
+            frame.main_claim,
+            frame.cause,
+            frame.mechanism,
+            frame.consequence,
+            frame.future_expectation,
+        ):
+            if value:
+                parts.append(str(value).strip())
+        if frame.implications:
+            parts.append(", ".join(str(item).strip() for item in frame.implications if str(item).strip()))
+        if frame.actors:
+            parts.append(", ".join(str(item).strip() for item in frame.actors if str(item).strip()))
+        compact = " | ".join(part for part in parts if part)
+        compact = " ".join(compact.split())
+        return compact[:max_length].strip()
+
 
 class EmbeddingNarrativeBackend(NarrativeEmbeddingBackend):
     def __init__(self, embedding_client: BaseEmbeddingClient) -> None:
@@ -474,7 +497,19 @@ class EmbeddingNarrativeBackend(NarrativeEmbeddingBackend):
         outputs: list[NarrativeFrameEmbedding] = []
         for frame in frames:
             representation = formatter.to_representation_text(frame)
-            vector = tuple(self.embedding_client.embed_text(representation))
+            compact_representation = formatter.to_compact_representation_text(frame)
+            try:
+                vector = tuple(self.embedding_client.embed_text(representation))
+            except EmbeddingError:
+                logger.exception("Failed to embed full narrative frame representation; retrying with compact text.")
+                if not compact_representation:
+                    continue
+                try:
+                    vector = tuple(self.embedding_client.embed_text(compact_representation))
+                    representation = compact_representation
+                except EmbeddingError:
+                    logger.exception("Failed to embed narrative frame after compact fallback; skipping frame.")
+                    continue
             outputs.append(
                 NarrativeFrameEmbedding(
                     frame_id=frame.frame_id,
