@@ -7,7 +7,31 @@ from app.repositories.base import BaseRepository, bool_to_int, compact_datetime_
 
 
 class ArticleRepository(BaseRepository):
+    """Репозиторий для управления новостными статьями в БД.
+    
+    Предоставляет методы для:
+    - Создания и поиска статей
+    - Фильтрации по дате, источнику, содержимому
+    - Управления дубликатами и каноническими версиями
+    - Работы с группами дубликатов
+    
+    Примечания:
+        - Все статьи хранят нормализованный content_hash для дедупликации
+        - is_canonical флаг указывает на основную версию статьи
+        - Статьи связаны с источниками через source_id
+    """
     def create_article(self, payload: ArticleCreate) -> Article:
+        """Создать новую статью в БД.
+        
+        Args:
+            payload: Данные для создания статьи
+            
+        Returns:
+            Созданная статья с ID из БД
+            
+        Raises:
+            RuntimeError: Если статья не была загружена обратно из БД
+        """
         cursor = self.connection.execute(
             """
             INSERT INTO articles (
@@ -39,14 +63,41 @@ class ArticleRepository(BaseRepository):
         return article
 
     def get_article_by_id(self, article_id: int) -> Article | None:
+        """Получить статью по ID.
+        
+        Args:
+            article_id: ID статьи
+            
+        Returns:
+            Статья или None если не найдена
+        """
         row = self._fetch_one("SELECT * FROM articles WHERE id = ?", (article_id,))
         return self._row_to_article(row) if row else None
 
     def get_article_by_url(self, url: str) -> Article | None:
+        """Получить статью по URL.
+        
+        Args:
+            url: Уникальный URL статьи
+            
+        Returns:
+            Статья или None если не найдена
+        """
         row = self._fetch_one("SELECT * FROM articles WHERE url = ?", (url,))
         return self._row_to_article(row) if row else None
 
     def get_article_by_content_hash(self, content_hash: str) -> Article | None:
+        """Получить статью по хешу контента.
+        
+        Используется для обнаружения дубликатов. Если есть несколько версий,
+        возвращает каноническую версию.
+        
+        Args:
+            content_hash: SHA256 хеш нормализованного контента
+            
+        Returns:
+            Статья или None если не найдена
+        """
         row = self._fetch_one(
             """
             SELECT *
@@ -60,6 +111,14 @@ class ArticleRepository(BaseRepository):
         return self._row_to_article(row) if row else None
 
     def list_by_ids(self, article_ids: list[int]) -> list[Article]:
+        """Получить несколько статей по их ID.
+        
+        Args:
+            article_ids: Список ID статей
+            
+        Returns:
+            Список статей в порядке убывания даты публикации
+        """
         if not article_ids:
             return []
         placeholders = ", ".join(["?"] * len(article_ids))
@@ -70,6 +129,15 @@ class ArticleRepository(BaseRepository):
         return [self._row_to_article(row) for row in rows]
 
     def list_articles_by_date_range(self, date_from: str, date_to: str) -> list[Article]:
+        """Получить статьи за период (включая дубликаты).
+        
+        Args:
+            date_from: ISO-формат начальной даты
+            date_to: ISO-формат конечной даты
+            
+        Returns:
+            Статьи в порядке возрастания даты
+        """
         date_from = normalize_datetime_bound(date_from) or date_from
         date_to = normalize_datetime_bound(date_to) or date_to
         rows = self._fetch_all(
@@ -84,6 +152,17 @@ class ArticleRepository(BaseRepository):
         return [self._row_to_article(row) for row in rows]
 
     def list_canonical_articles_by_date_range(self, date_from: str, date_to: str) -> list[Article]:
+        """Получить только канонические статьи за период.
+        
+        Исключает известные дубликаты (non-canonical версии).
+        
+        Args:
+            date_from: ISO-формат начальной даты
+            date_to: ISO-формат конечной даты
+            
+        Returns:
+            Канонические статьи в порядке возрастания даты
+        """
         date_from = normalize_datetime_bound(date_from) or date_from
         date_to = normalize_datetime_bound(date_to) or date_to
         rows = self._fetch_all(
@@ -103,6 +182,17 @@ class ArticleRepository(BaseRepository):
         date_to: str,
         source_domains: list[str] | None = None,
     ) -> list[Article]:
+        """Получить канонические статьи за период и от конкретных источников.
+        
+        Args:
+            date_from: ISO-формат начальной даты
+            date_to: ISO-формат конечной даты
+            source_domains: Список доменов источников (например, ['lenta.ru', 'ria.ru']).
+                           Если None, возвращает все источники.
+            
+        Returns:
+            Канонические статьи в порядке возрастания даты
+        """
         date_from = normalize_datetime_bound(date_from) or date_from
         date_to = normalize_datetime_bound(date_to) or date_to
         clauses = [
@@ -133,6 +223,18 @@ class ArticleRepository(BaseRepository):
         is_canonical: bool,
         duplicate_group_id: str | None = None,
     ) -> bool:
+        """Обновить статус канонической версии статьи.
+        
+        Используется для управления дубликатами и выбора основной версии.
+        
+        Args:
+            article_id: ID статьи для обновления
+            is_canonical: Является ли эта версия канонической
+            duplicate_group_id: ID группы дубликатов (если есть)
+            
+        Returns:
+            True если статья была обновлена, False если статьи не существует
+        """
         cursor = self.connection.execute(
             """
             UPDATE articles
@@ -145,9 +247,15 @@ class ArticleRepository(BaseRepository):
         return cursor.rowcount > 0
 
     def list_by_source(self, source_id: int, limit: int = 100) -> list[Article]:
-        rows = self._fetch_all(
-            """
-            SELECT *
+        """Получить статьи конкретного источника.
+        
+        Args:
+            source_id: ID источника
+            limit: Максимальное количество статей (по умолчанию 100)
+            
+        Returns:
+            Список статей источника в порядке убывания даты
+        """
             FROM articles
             WHERE source_id = ?
             ORDER BY published_at DESC, id DESC
@@ -166,6 +274,20 @@ class ArticleRepository(BaseRepository):
         is_primary: bool,
         similarity_score: float | None = None,
     ) -> int:
+        """Создать запись о дубликате статьи.
+        
+        Используется для отслеживания взаимосвязи дубликатов и выбора основной версии.
+        
+        Args:
+            duplicate_group_id: ID группы дубликатов
+            article_id: ID статьи в этой группе
+            duplicate_type: Тип дубликата (например, 'hash_match', 'url_match')
+            is_primary: Является ли это основной версией
+            similarity_score: Оценка схожести (от 0 до 1), если применимо
+            
+        Returns:
+            ID созданной записи в таблице article_duplicates
+        """
         cursor = self.connection.execute(
             """
             INSERT INTO article_duplicates (
@@ -186,6 +308,16 @@ class ArticleRepository(BaseRepository):
 
     @staticmethod
     def _row_to_article(row: sqlite3.Row) -> Article:
+        """Преобразовать строку БД в объект Article.
+        
+        Внутренний метод для конвертации результатов SQL-запроса в dataclass.
+        
+        Args:
+            row: Строка из результата запроса SELECT *
+            
+        Returns:
+            Объект Article с заполненными полями
+        """
         return Article(
             id=row["id"],
             source_id=row["source_id"],
