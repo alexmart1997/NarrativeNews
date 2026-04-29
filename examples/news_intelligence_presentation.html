@@ -1,0 +1,1418 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>News Intelligence — Product Presentation</title>
+  <style>
+    :root {
+      --bg: #08111f;
+      --bg-soft: #0d1728;
+      --panel: rgba(12, 21, 37, 0.82);
+      --panel-strong: rgba(9, 17, 30, 0.92);
+      --line: rgba(160, 193, 255, 0.18);
+      --text: #f5f7fb;
+      --muted: #9fb0cb;
+      --accent: #58d5ff;
+      --accent-2: #7cffb2;
+      --accent-3: #ffd166;
+      --danger: #ff6b7a;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      --radius: 28px;
+      --font-display: "Segoe UI", "Inter", system-ui, sans-serif;
+      --font-body: "Segoe UI", "Inter", system-ui, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        radial-gradient(circle at top left, rgba(88, 213, 255, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(124, 255, 178, 0.15), transparent 22%),
+        linear-gradient(180deg, #07111f 0%, #0a1423 48%, #08111f 100%);
+      color: var(--text);
+      font-family: var(--font-body);
+      overflow: hidden;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      inset: auto;
+      pointer-events: none;
+      filter: blur(90px);
+      opacity: 0.45;
+      z-index: 0;
+    }
+
+    body::before {
+      width: 320px;
+      height: 320px;
+      top: 8%;
+      right: 8%;
+      background: rgba(88, 213, 255, 0.22);
+    }
+
+    body::after {
+      width: 360px;
+      height: 360px;
+      bottom: 6%;
+      left: 5%;
+      background: rgba(124, 255, 178, 0.14);
+    }
+
+    .deck-shell {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      padding: 28px 18px 22px 24px;
+      border-right: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(8, 15, 27, 0.92), rgba(8, 15, 27, 0.72));
+      backdrop-filter: blur(18px);
+      overflow: auto;
+    }
+
+    .brand {
+      margin-bottom: 24px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.03);
+      box-shadow: var(--shadow);
+    }
+
+    .brand h1 {
+      margin: 0 0 8px;
+      font-size: 1.35rem;
+      line-height: 1.1;
+      letter-spacing: 0.02em;
+    }
+
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.93rem;
+      line-height: 1.45;
+    }
+
+    .toc {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .toc button {
+      width: 100%;
+      text-align: left;
+      border: 1px solid transparent;
+      border-radius: 16px;
+      background: transparent;
+      color: var(--muted);
+      padding: 12px 14px;
+      cursor: pointer;
+      transition: 160ms ease;
+      font: inherit;
+    }
+
+    .toc button:hover,
+    .toc button.active {
+      color: var(--text);
+      background: rgba(88, 213, 255, 0.08);
+      border-color: rgba(88, 213, 255, 0.22);
+      transform: translateX(2px);
+    }
+
+    .toc .index {
+      display: inline-flex;
+      width: 28px;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .content {
+      position: relative;
+      padding: 28px 28px 96px;
+      overflow: hidden;
+    }
+
+    .slides {
+      height: calc(100vh - 124px);
+      position: relative;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transform: translateX(24px) scale(0.985);
+      pointer-events: none;
+      transition: opacity 220ms ease, transform 220ms ease;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 20px;
+    }
+
+    .slide.active {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .slide-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(88, 213, 255, 0.08);
+      border: 1px solid rgba(88, 213, 255, 0.18);
+      color: var(--accent);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+
+    .slide-header h2 {
+      margin: 0;
+      font-size: clamp(2rem, 3vw, 3.4rem);
+      line-height: 0.95;
+      font-family: var(--font-display);
+      letter-spacing: -0.03em;
+    }
+
+    .slide-number {
+      min-width: 92px;
+      text-align: right;
+      color: rgba(245, 247, 251, 0.22);
+      font-size: 3.4rem;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+    }
+
+    .slide-body {
+      min-height: 0;
+      padding: 28px;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, var(--panel), var(--panel-strong));
+      box-shadow: var(--shadow);
+      overflow: auto;
+    }
+
+    .lead {
+      font-size: 1.18rem;
+      line-height: 1.65;
+      color: #e8eefb;
+      max-width: 980px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+      margin-top: 24px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card {
+      padding: 20px;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .card h3 {
+      margin: 0 0 12px;
+      font-size: 1.04rem;
+      color: var(--text);
+    }
+
+    .card p,
+    .card li {
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 0;
+    }
+
+    .metric-band {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 26px;
+    }
+
+    .metric {
+      padding: 18px 18px 16px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(88, 213, 255, 0.08), rgba(255, 255, 255, 0.03));
+      border: 1px solid rgba(88, 213, 255, 0.14);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 1.9rem;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+
+    .metric span {
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    ul {
+      margin: 10px 0 0;
+      padding-left: 20px;
+    }
+
+    li {
+      margin: 7px 0;
+      line-height: 1.6;
+    }
+
+    .quote {
+      margin-top: 24px;
+      padding: 22px 24px;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 22px 22px 0;
+      background: rgba(88, 213, 255, 0.06);
+      color: #edf6ff;
+      font-size: 1.08rem;
+      line-height: 1.7;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+      margin-top: 24px;
+    }
+
+    .timeline-step {
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .timeline-step .step {
+      width: 54px;
+      height: 54px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      background: rgba(124, 255, 178, 0.08);
+      border: 1px solid rgba(124, 255, 178, 0.22);
+      color: var(--accent-2);
+      font-weight: 800;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255, 209, 102, 0.08);
+      border: 1px solid rgba(255, 209, 102, 0.16);
+      color: #ffe8a8;
+      font-size: 0.94rem;
+      line-height: 1.2;
+    }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 22px;
+    }
+
+    .comparison .card {
+      min-height: 100%;
+    }
+
+    .highlight {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .danger {
+      color: #ff9aa5;
+    }
+
+    .success {
+      color: #afffd0;
+    }
+
+    .footer-nav {
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      bottom: 22px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .nav-buttons {
+      display: flex;
+      gap: 12px;
+    }
+
+    .nav-btn {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      padding: 12px 16px;
+      border-radius: 14px;
+      cursor: pointer;
+      font: inherit;
+      transition: 160ms ease;
+    }
+
+    .nav-btn:hover {
+      background: rgba(88, 213, 255, 0.09);
+      border-color: rgba(88, 213, 255, 0.2);
+    }
+
+    .progress {
+      flex: 1;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      justify-content: center;
+      min-width: 0;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.14);
+      transition: 180ms ease;
+    }
+
+    .dot.active {
+      width: 28px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    }
+
+    .team-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 24px;
+    }
+
+    .team-member {
+      padding: 18px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .team-member strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 1rem;
+    }
+
+    .team-member span {
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .architecture-map {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    .stack-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .stack-tag {
+      padding: 10px 14px;
+      border-radius: 14px;
+      background: rgba(88, 213, 255, 0.08);
+      border: 1px solid rgba(88, 213, 255, 0.18);
+      color: #dff7ff;
+      font-weight: 600;
+    }
+
+    .dense ul {
+      margin-top: 0;
+    }
+
+    @media (max-width: 1180px) {
+      .deck-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .content {
+        padding: 18px 18px 90px;
+      }
+
+      .slides {
+        height: calc(100vh - 110px);
+      }
+
+      .grid.two,
+      .grid.three,
+      .comparison,
+      .architecture-map,
+      .team-list,
+      .metric-band {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media print {
+      body {
+        overflow: visible;
+        background: #fff;
+        color: #000;
+      }
+
+      .sidebar,
+      .footer-nav {
+        display: none;
+      }
+
+      .content,
+      .slides,
+      .slide,
+      .slide.active {
+        position: static;
+        height: auto;
+        opacity: 1;
+        transform: none;
+        overflow: visible;
+        page-break-after: always;
+      }
+
+      .slide-body,
+      .brand,
+      .card,
+      .team-member,
+      .metric {
+        box-shadow: none;
+        background: #fff;
+        color: #000;
+        border-color: #ddd;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>News Intelligence</h1>
+        <p>AI-платформа для смыслового поиска, аналитики и выявления нарративов в новостном потоке.</p>
+      </div>
+      <nav class="toc" id="toc"></nav>
+    </aside>
+
+    <main class="content">
+      <div class="slides" id="slides">
+
+        <section class="slide active" data-title="Титульный слайд">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Презентация проекта</div>
+              <h2>News Intelligence</h2>
+            </div>
+            <div class="slide-number">01</div>
+          </div>
+          <div class="slide-body">
+            <p class="lead">AI-платформа для смыслового поиска, аналитики и выявления нарративов в новостном потоке.</p>
+            <div class="metric-band">
+              <div class="metric"><strong>RAG</strong><span>Смысловой поиск и аналитическая сводка по новостному корпусу.</span></div>
+              <div class="metric"><strong>Narratives</strong><span>Выявление повторяющихся интерпретаций событий.</span></div>
+              <div class="metric"><strong>Local AI</strong><span>Локальный стек с управляемым хранением и моделями.</span></div>
+              <div class="metric"><strong>SQLite</strong><span>Простое и надёжное хранение корпуса на текущем этапе.</span></div>
+            </div>
+            <div class="team-list">
+              <div class="team-member"><strong>Абиев Марик</strong><span>Machine Learning Engineer</span></div>
+              <div class="team-member"><strong>Барабошкина Кристина</strong><span>Frontend Engineer</span></div>
+              <div class="team-member"><strong>Варфоломеев Константин</strong><span>Backend Engineer</span></div>
+              <div class="team-member"><strong>Владынцев Сергей</strong><span>Backend Engineer</span></div>
+              <div class="team-member"><strong>Мартыненко Алексей</strong><span>Machine Learning Engineer, Product Manager</span></div>
+              <div class="team-member"><strong>Подгорнов Владислав</strong><span>Market Analysis &amp; Product Positioning</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Идея продукта">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Маркетинговый блок</div>
+              <h2>Идея продукта</h2>
+            </div>
+            <div class="slide-number">02</div>
+          </div>
+          <div class="slide-body">
+            <p class="lead">Мы разрабатываем систему интеллектуального анализа новостей, которая превращает большой поток публикаций в удобный аналитический инструмент.</p>
+            <div class="grid two">
+              <div class="card">
+                <h3>Что делает продукт</h3>
+                <ul>
+                  <li>собирает и структурирует новостной корпус;</li>
+                  <li>ищет материалы не только по словам, но и по смыслу;</li>
+                  <li>формирует краткие аналитические сводки по запросу;</li>
+                  <li>выявляет не только темы, но и устойчивые нарративы.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Ключевая идея</h3>
+                <p>News Intelligence — это AI-система, которая помогает не просто читать новости, а понимать, какие сюжеты, трактовки и смысловые конструкции доминируют в информационном поле.</p>
+              </div>
+            </div>
+            <div class="quote">Продукт переводит работу с новостями из режима <span class="highlight">чтения потока</span> в режим <span class="highlight">структурированной аналитики</span>.</div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Проблема">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Проблема</div>
+              <h2>Проблема, которую мы решаем</h2>
+            </div>
+            <div class="slide-number">03</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid three">
+              <div class="card">
+                <h3>Избыточный объём информации</h3>
+                <p>Публикаций слишком много, и вручную анализировать весь поток долго и дорого.</p>
+              </div>
+              <div class="card">
+                <h3>Слабая точность традиционного поиска</h3>
+                <p>Обычный поиск по ключевым словам не учитывает смысл и плохо работает на перефразировках.</p>
+              </div>
+              <div class="card">
+                <h3>Отсутствие интерпретационного уровня</h3>
+                <p>Даже если статьи найдены, остаётся вопрос: какую общую картину они формируют и какая интерпретация событий повторяется в потоке.</p>
+              </div>
+            </div>
+            <div class="comparison">
+              <div class="card">
+                <h3>Что это означает для пользователя</h3>
+                <ul>
+                  <li>аналитики тратят время на ручной разбор;</li>
+                  <li>важные сигналы теряются в шуме;</li>
+                  <li>контекст приходится собирать вручную.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Что растёт вместе с потоком</h3>
+                <ul>
+                  <li>стоимость аналитики;</li>
+                  <li>риск пропустить важный сюжет;</li>
+                  <li>время между публикацией и аналитическим выводом.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Целевая аудитория">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Аудитория</div>
+              <h2>Для кого наш продукт</h2>
+            </div>
+            <div class="slide-number">04</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid two">
+              <div class="card">
+                <h3>Кому полезен продукт</h3>
+                <ul>
+                  <li>аналитические центры;</li>
+                  <li>OSINT- и research-команды;</li>
+                  <li>PR и GR-подразделения;</li>
+                  <li>риск- и репутационные команды;</li>
+                  <li>corporate strategy и business intelligence;</li>
+                  <li>исследователи в сферах политики, экономики, технологий и медиа.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Пользовательская ценность</h3>
+                <ul>
+                  <li>быстрее находить нужный контекст;</li>
+                  <li>быстрее готовить аналитические справки;</li>
+                  <li>отслеживать информационные риски;</li>
+                  <li>понимать, какие интерпретации событий становятся доминирующими.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="pill-row">
+              <span class="pill">Research</span>
+              <span class="pill">OSINT</span>
+              <span class="pill">GR / PR</span>
+              <span class="pill">Risk Intelligence</span>
+              <span class="pill">Business Intelligence</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Функции продукта">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Функциональность</div>
+              <h2>Что именно делает продукт</h2>
+            </div>
+            <div class="slide-number">05</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid two">
+              <div class="card dense">
+                <h3>Основные функции</h3>
+                <ul>
+                  <li>сбор и хранение новостного корпуса;</li>
+                  <li>разбиение материалов на аналитически удобные фрагменты;</li>
+                  <li>гибридный поиск по словам и по смыслу;</li>
+                  <li>генерация краткой аналитической сводки;</li>
+                  <li>выделение тематических областей в корпусе;</li>
+                  <li>извлечение narrative frames из статей;</li>
+                  <li>кластеризация повторяющихся нарративов;</li>
+                  <li>отслеживание динамики нарративов во времени.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Ключевая особенность</h3>
+                <p>Мы работаем не только с вопросом <span class="highlight">«о чём эта новость?»</span>, но и с вопросом <span class="highlight">«какую интерпретационную историю она рассказывает?»</span></p>
+                <div class="quote">Продукт поднимает уровень анализа от документов и тем к смысловым конструкциям и объяснительным моделям.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Нарратив">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Narrative Intelligence</div>
+              <h2>Что такое нарратив и почему это важно</h2>
+            </div>
+            <div class="slide-number">06</div>
+          </div>
+          <div class="slide-body">
+            <div class="comparison">
+              <div class="card">
+                <h3>Topic</h3>
+                <p><strong>Topic</strong> отвечает на вопрос: <span class="highlight">о чём текст</span>.</p>
+              </div>
+              <div class="card">
+                <h3>Narrative</h3>
+                <p><strong>Narrative</strong> отвечает на вопрос: что происходит, почему это происходит, кто действует, к чему это ведёт и какой эмоциональный фон формируется.</p>
+              </div>
+            </div>
+            <div class="grid two">
+              <div class="card">
+                <h3>Почему это важно</h3>
+                <p>Реальное влияние новостей возникает не только на уровне фактов, но и на уровне повторяющихся объяснительных историй.</p>
+                <ul>
+                  <li>кризис как результат внешнего давления;</li>
+                  <li>кризис как следствие внутренних ошибок;</li>
+                  <li>кризис как сигнал будущих угроз;</li>
+                  <li>кризис как возможность для перестройки системы.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Практическая польза</h3>
+                <ul>
+                  <li>видеть повторяющиеся трактовки событий;</li>
+                  <li>находить доминирующие и конкурирующие версии происходящего;</li>
+                  <li>отслеживать изменение framing во времени;</li>
+                  <li>анализировать не только события, но и логику их подачи.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Конкуренты">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Рынок</div>
+              <h2>Конкуренты и рыночный контекст</h2>
+            </div>
+            <div class="slide-number">07</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid two">
+              <div class="card">
+                <h3>Новостные агрегаторы</h3>
+                <ul>
+                  <li>собирают и показывают публикации;</li>
+                  <li>удобны для чтения потока;</li>
+                  <li class="danger">почти не дают интеллектуальной аналитики.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Системы медиамониторинга</h3>
+                <ul>
+                  <li>отслеживают упоминания брендов, персон, тем;</li>
+                  <li>хорошо работают как алертинг и мониторинг;</li>
+                  <li class="danger">слабо раскрывают смысловую структуру новостей.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Поисковые и BI-решения</h3>
+                <ul>
+                  <li>ищут документы и строят отчёты;</li>
+                  <li>сильны в инфраструктуре и фильтрации;</li>
+                  <li class="danger">часто не дают narrative-level аналитики.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>LLM-обёртки над поиском</h3>
+                <ul>
+                  <li>умеют строить сводки;</li>
+                  <li>полезны для вопросно-ответного режима;</li>
+                  <li class="danger">без хорошего retrieval дают нестабильное качество.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Позиционирование">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Позиционирование</div>
+              <h2>Наше место на рынке</h2>
+            </div>
+            <div class="slide-number">08</div>
+          </div>
+          <div class="slide-body">
+            <p class="lead">Мы находимся между классическим медиамониторингом и исследовательской AI-аналитикой.</p>
+            <div class="grid two">
+              <div class="card">
+                <h3>Что объединяет продукт</h3>
+                <ul>
+                  <li>структурированный новостной корпус;</li>
+                  <li>гибридный retrieval;</li>
+                  <li>LLM-сводки;</li>
+                  <li>narrative intelligence.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Чем мы отличаемся</h3>
+                <ul>
+                  <li>ищем не только по словам, но и по смыслу;</li>
+                  <li>строим ответ по найденным материалам, а не галлюцинируем;</li>
+                  <li>выделяем устойчивые интерпретационные конструкции, а не только темы;</li>
+                  <li>строим слой аналитики поверх корпуса, а не просто интерфейс просмотра новостей.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="quote">Если агрегаторы отвечают на вопрос <span class="highlight">«что опубликовано?»</span>, а классический поиск — <span class="highlight">«где статьи по теме?»</span>, то наш продукт отвечает на вопрос <span class="highlight">«какой смысловой и нарративный контекст формируется вокруг темы?»</span>.</div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Экономика продукта">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Экономика</div>
+              <h2>Почему продукт экономически полезен</h2>
+            </div>
+            <div class="slide-number">09</div>
+          </div>
+          <div class="slide-body">
+            <div class="metric-band">
+              <div class="metric"><strong>↓</strong><span>Снижение доли ручного чтения и фильтрации.</span></div>
+              <div class="metric"><strong>↑</strong><span>Ускорение подготовки аналитических справок.</span></div>
+              <div class="metric"><strong>×</strong><span>Рост пропускной способности аналитика.</span></div>
+              <div class="metric"><strong>!</strong><span>Раннее обнаружение новых сюжетов и рисков.</span></div>
+            </div>
+            <div class="comparison">
+              <div class="card">
+                <h3>Практический эффект</h3>
+                <p>Один аналитик с такой системой может обработать заметно больший объём новостей, чем при ручной работе или использовании только базового keyword search.</p>
+              </div>
+              <div class="card">
+                <h3>Что экономит продукт</h3>
+                <ul>
+                  <li>время;</li>
+                  <li>человеческий ресурс;</li>
+                  <li>стоимость первичного анализа;</li>
+                  <li>стоимость missed signals в информационном поле.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Общая архитектура">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Архитектура</div>
+              <h2>Общая архитектура системы</h2>
+            </div>
+            <div class="slide-number">10</div>
+          </div>
+          <div class="slide-body">
+            <p class="lead">Сначала мы строим качественный корпус и retrieval-слой, затем поверх него добавляем интеллектуальную аналитику.</p>
+            <div class="timeline">
+              <div class="timeline-step"><div class="step">1</div><div class="card"><h3>Data Layer</h3><p>Сбор и нормализация новостей, хранение корпуса, разбиение статей на чанки.</p></div></div>
+              <div class="timeline-step"><div class="step">2</div><div class="card"><h3>Retrieval Layer</h3><p>Построение эмбеддингов, гибридный retrieval, reranking и генерация сводки.</p></div></div>
+              <div class="timeline-step"><div class="step">3</div><div class="card"><h3>Analytics Layer</h3><p>Topic discovery, narrative extraction, narrative embeddings, clustering, labeling и dynamics.</p></div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Источники и хранение">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Data Layer</div>
+              <h2>Источники данных и хранение</h2>
+            </div>
+            <div class="slide-number">11</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid two">
+              <div class="card">
+                <h3>Источник данных</h3>
+                <p>На текущем этапе основным источником новостей выступают <span class="highlight">РИА Новости</span>.</p>
+                <ul>
+                  <li>стабильный и крупный корпус;</li>
+                  <li>однородный формат материалов;</li>
+                  <li>быстрый запуск ingestion-пайплайна;</li>
+                  <li>основа для тестирования retrieval и narrative-аналитики.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Хранение: SQLite</h3>
+                <p>Для хранения на текущем этапе выбрана <span class="highlight">SQLite</span>.</p>
+                <ul>
+                  <li>хранит статьи, чанки, эмбеддинги и narrative snapshots;</li>
+                  <li>не требует отдельного сервера БД;</li>
+                  <li>удобна для локальной разработки и отладки;</li>
+                  <li>даёт лучший баланс между простотой, скоростью разработки и надёжностью.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Подготовка корпуса">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Preprocessing</div>
+              <h2>Подготовка корпуса</h2>
+            </div>
+            <div class="slide-number">12</div>
+          </div>
+          <div class="slide-body">
+            <div class="architecture-map">
+              <div class="card">
+                <h3>Нормализация</h3>
+                <ul>
+                  <li>заголовок;</li>
+                  <li>дата публикации;</li>
+                  <li>источник;</li>
+                  <li>URL;</li>
+                  <li>основной текст;</li>
+                  <li>служебные метаданные.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Очистка</h3>
+                <ul>
+                  <li>устранение дубликатов;</li>
+                  <li>нормализация полей;</li>
+                  <li>проверка консистентности корпуса.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Почему это важно</h3>
+                <p>Если корпус изначально не нормализован, retrieval, embeddings, clustering и narratives будут работать нестабильно.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Чанки">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Chunking</div>
+              <h2>Разбиение статей на чанки</h2>
+            </div>
+            <div class="slide-number">13</div>
+          </div>
+          <div class="slide-body">
+            <div class="comparison">
+              <div class="card">
+                <h3>Почему не статья целиком</h3>
+                <ul>
+                  <li>в одной статье могут быть несколько смысловых линий;</li>
+                  <li>релевантный ответ часто содержится только в одном абзаце;</li>
+                  <li>длинный документ хуже подходит для точного поиска.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Что даёт chunk-based подход</h3>
+                <ul>
+                  <li>повышает точность retrieval;</li>
+                  <li>позволяет находить именно те фрагменты, которые отвечают на запрос;</li>
+                  <li>улучшает качество RAG-сводок.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Embeddings">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Semantic Layer</div>
+              <h2>Embeddings и семантическое представление текста</h2>
+            </div>
+            <div class="slide-number">14</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid two">
+              <div class="card">
+                <h3>Что происходит</h3>
+                <p>Для каждого текстового чанка строится embedding — векторное представление текста.</p>
+                <div class="stack-list">
+                  <span class="stack-tag">nomic-embed-text</span>
+                  <span class="stack-tag">bge-m3</span>
+                  <span class="stack-tag">Ollama</span>
+                </div>
+              </div>
+              <div class="card">
+                <h3>Зачем нужны embeddings</h3>
+                <ul>
+                  <li>поиск не только по совпадению слов;</li>
+                  <li>поиск по смысловой близости;</li>
+                  <li>обработка перефразировок и близких формулировок.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="quote">Например, система может сблизить: «инфляция в России», «рост потребительских цен», «ускорение подорожания товаров» — даже если слова не совпадают буквально.</div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Hybrid Retrieval">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">RAG Core</div>
+              <h2>Гибридный retrieval</h2>
+            </div>
+            <div class="slide-number">15</div>
+          </div>
+          <div class="slide-body">
+            <div class="comparison">
+              <div class="card">
+                <h3>Лексический поиск</h3>
+                <ul>
+                  <li>ищет по словам, словоформам и прямым совпадениям;</li>
+                  <li>хорошо работает на точных сущностях, названиях и редких терминах.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Семантический поиск</h3>
+                <ul>
+                  <li>использует embeddings;</li>
+                  <li>ищет по смысловой близости;</li>
+                  <li>находит перефразировки и близкие по смыслу формулировки.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="timeline">
+              <div class="timeline-step"><div class="step">A</div><div class="card"><h3>Сначала</h3><p>Оба поиска формируют свои списки кандидатов по chunk-уровню.</p></div></div>
+              <div class="timeline-step"><div class="step">B</div><div class="card"><h3>Потом</h3><p>Кандидаты объединяются, и для каждого считается итоговая релевантность.</p></div></div>
+              <div class="timeline-step"><div class="step">C</div><div class="card"><h3>Почему это лучше</h3><p>Hybrid retrieval даёт лучший баланс точности и полноты, чем только keywords или только semantics.</p></div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Reranking">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Ranking Layer</div>
+              <h2>Reranking</h2>
+            </div>
+            <div class="slide-number">16</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid two">
+              <div class="card">
+                <h3>Какие сигналы учитываются</h3>
+                <ul>
+                  <li>lexical relevance;</li>
+                  <li>semantic similarity;</li>
+                  <li>topical relevance;</li>
+                  <li>штрафы за boilerplate и технический шум;</li>
+                  <li>anchor-term logic для узких запросов.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Model-based reranker</h3>
+                <div class="stack-list">
+                  <span class="stack-tag">BAAI/bge-reranker-v2-m3</span>
+                </div>
+                <p>Модель получает пару <span class="highlight">запрос + chunk</span> и оценивает, насколько этот фрагмент действительно отвечает на запрос.</p>
+              </div>
+            </div>
+            <div class="quote">Retrieval находит кандидатов, а reranker убирает шум, точнее сортирует выдачу и повышает качество контекста для LLM.</div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="LLM Summary">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Generation</div>
+              <h2>Генерация аналитической сводки</h2>
+            </div>
+            <div class="slide-number">17</div>
+          </div>
+          <div class="slide-body">
+            <div class="comparison">
+              <div class="card">
+                <h3>Как строится ответ</h3>
+                <p>Когда лучшие chunks найдены и отранжированы, система передаёт их в языковую модель для генерации сводки.</p>
+                <div class="stack-list">
+                  <span class="stack-tag">qwen2.5</span>
+                  <span class="stack-tag">3b / 7b</span>
+                  <span class="stack-tag">Ollama</span>
+                </div>
+              </div>
+              <div class="card">
+                <h3>Роль LLM</h3>
+                <ul>
+                  <li>retrieval отвечает за поиск;</li>
+                  <li>reranker отвечает за порядок и точность;</li>
+                  <li>LLM отвечает за формирование понятного ответа.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="card" style="margin-top: 20px;">
+              <h3>Почему выбран Qwen</h3>
+              <ul>
+                <li>хорошая совместимость с локальным запуском через Ollama;</li>
+                <li>приемлемое качество для summarization и structured extraction;</li>
+                <li>удобный баланс между качеством и вычислительной стоимостью.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Topic Discovery">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Corpus Analytics</div>
+              <h2>Topic Discovery</h2>
+            </div>
+            <div class="slide-number">18</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid two">
+              <div class="card">
+                <h3>Методы</h3>
+                <div class="stack-list">
+                  <span class="stack-tag">BERTopic</span>
+                  <span class="stack-tag">HDBSCAN</span>
+                  <span class="stack-tag">UMAP</span>
+                  <span class="stack-tag">c-TF-IDF</span>
+                </div>
+                <ul>
+                  <li>группировка статей по близости;</li>
+                  <li>понижение размерности признаков;</li>
+                  <li>выделение плотных кластеров;</li>
+                  <li>извлечение ключевых слов темы.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Зачем это нужно</h3>
+                <ul>
+                  <li>разбить корпус на более однородные смысловые области;</li>
+                  <li>подготовить почву для narrative analysis;</li>
+                  <li>ограничить смешивание слишком разных сюжетов.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Narrative Extraction">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Narrative Layer</div>
+              <h2>Narrative Extraction</h2>
+            </div>
+            <div class="slide-number">19</div>
+          </div>
+          <div class="slide-body">
+            <div class="comparison">
+              <div class="card">
+                <h3>Какая модель используется</h3>
+                <div class="stack-list">
+                  <span class="stack-tag">qwen2.5</span>
+                </div>
+                <p>Внутри корпуса или тематических массивов система пытается извлечь narrative frames на уровне статей.</p>
+              </div>
+              <div class="card">
+                <h3>Что включает narrative frame</h3>
+                <ul>
+                  <li>основное утверждение;</li>
+                  <li>ключевых акторов;</li>
+                  <li>причину;</li>
+                  <li>механизм;</li>
+                  <li>последствия;</li>
+                  <li>ожидание будущего;</li>
+                  <li>тональность и импликации.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="quote">Это переход от уровня <span class="highlight">«о чём статья»</span> к уровню <span class="highlight">«какую интерпретационную историю она строит»</span>.</div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Narrative Clustering">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Narrative Structure</div>
+              <h2>Narrative Embeddings и Clustering</h2>
+            </div>
+            <div class="slide-number">20</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid two">
+              <div class="card">
+                <h3>Почему narrative embeddings отдельные</h3>
+                <ul>
+                  <li>близость статей не равна близости нарративов;</li>
+                  <li>разные события могут поддерживать один и тот же narrative;</li>
+                  <li>одна тема может включать несколько конкурирующих narratives.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Кластеризация</h3>
+                <div class="stack-list">
+                  <span class="stack-tag">HDBSCAN</span>
+                </div>
+                <ul>
+                  <li>работает с плотностной кластеризацией;</li>
+                  <li>не заставляет каждый объект входить в кластер;</li>
+                  <li>оставляет шум как noise, что важно для narrative-задачи.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Narrative Dynamics">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Dynamics</div>
+              <h2>Narrative Labeling и динамика</h2>
+            </div>
+            <div class="slide-number">21</div>
+          </div>
+          <div class="slide-body">
+            <div class="grid two">
+              <div class="card">
+                <h3>После кластеризации</h3>
+                <p>Система строит labels для narrative clusters. Для этого снова используется <span class="highlight">qwen2.5</span>.</p>
+                <ul>
+                  <li>название нарратива;</li>
+                  <li>краткое описание;</li>
+                  <li>canonical claim;</li>
+                  <li>ключевые акторы;</li>
+                  <li>причинная цепочка;</li>
+                  <li>доминирующая тональность;</li>
+                  <li>возможный контр-нарратив.</li>
+                </ul>
+              </div>
+              <div class="card">
+                <h3>Динамика</h3>
+                <ul>
+                  <li>частота;</li>
+                  <li>доля в потоке;</li>
+                  <li>рост и спад;</li>
+                  <li>устойчивость;</li>
+                  <li>распределение по источникам;</li>
+                  <li>всплески во времени.</li>
+                </ul>
+                <p class="success">Narratives становятся не просто метками, а полноценными наблюдаемыми объектами анализа.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Связь компонентов">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">System Flow</div>
+              <h2>Связь компонентов между собой</h2>
+            </div>
+            <div class="slide-number">22</div>
+          </div>
+          <div class="slide-body">
+            <div class="timeline">
+              <div class="timeline-step"><div class="step">1</div><div class="card"><p>Новости загружаются и нормализуются.</p></div></div>
+              <div class="timeline-step"><div class="step">2</div><div class="card"><p>Сохраняются в SQLite.</p></div></div>
+              <div class="timeline-step"><div class="step">3</div><div class="card"><p>Статьи режутся на чанки, для чанков строятся embeddings.</p></div></div>
+              <div class="timeline-step"><div class="step">4</div><div class="card"><p>Retrieval ищет кандидатов, reranker улучшает ранжирование, LLM формирует итоговую сводку.</p></div></div>
+              <div class="timeline-step"><div class="step">5</div><div class="card"><p>Topic discovery группирует корпус, LLM извлекает narrative frames, narratives эмбеддятся и кластеризуются.</p></div></div>
+              <div class="timeline-step"><div class="step">6</div><div class="card"><p>Narratives получают labels и временную динамику, результаты показываются в интерфейсе.</p></div></div>
+            </div>
+            <div class="quote">Каждый следующий слой не заменяет предыдущий, а строится поверх него: без корпуса нет retrieval, без retrieval нет качественного RAG, без topic/narrative-слоя нет глубокой аналитики.</div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Выбор стека">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Tech Decisions</div>
+              <h2>Почему выбран именно такой стек</h2>
+            </div>
+            <div class="slide-number">23</div>
+          </div>
+          <div class="slide-body">
+            <div class="architecture-map">
+              <div class="card"><h3>SQLite</h3><p>Быстрый старт, локальная разработка, низкая инфраструктурная стоимость, достаточность для текущего этапа.</p></div>
+              <div class="card"><h3>Chunk-based architecture</h3><p>Выше точность retrieval и лучше контроль над контекстом.</p></div>
+              <div class="card"><h3>Embeddings</h3><p>Нужны для semantic search и работы с перефразировками.</p></div>
+              <div class="card"><h3>Hybrid retrieval</h3><p>Сочетает точность keywords и гибкость semantics, устойчивее любого одного метода отдельно.</p></div>
+              <div class="card"><h3>Reranker</h3><p>Улучшает порядок кандидатов и качество итогового контекста.</p></div>
+              <div class="card"><h3>Qwen</h3><p>Подходит для локального LLM-контура и работает как summarizer, extractor и labeler.</p></div>
+              <div class="card"><h3>BERTopic + HDBSCAN + UMAP</h3><p>Даёт понятный и модульный pipeline для topic discovery.</p></div>
+              <div class="card"><h3>Narrative-level embeddings</h3><p>Позволяют работать с интерпретациями, а не только со статьями.</p></div>
+              <div class="card"><h3>Ollama</h3><p>Упрощает локальный запуск моделей и снижает зависимость от внешних облачных API.</p></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="slide" data-title="Итог">
+          <div class="slide-header">
+            <div>
+              <div class="eyebrow">Conclusion</div>
+              <h2>Итог</h2>
+            </div>
+            <div class="slide-number">24</div>
+          </div>
+          <div class="slide-body">
+            <p class="lead">News Intelligence — это локальная AI-платформа для анализа новостного потока, которая объединяет сбор и хранение новостей, смысловой поиск, retrieval-augmented generation, topic analysis и narrative intelligence.</p>
+            <div class="grid two">
+              <div class="card">
+                <h3>Главная ценность</h3>
+                <p>Мы сокращаем путь от большого и шумного новостного массива к понятной аналитической картине.</p>
+              </div>
+              <div class="card">
+                <h3>Что получает пользователь</h3>
+                <ul>
+                  <li>понимание, какие темы обсуждаются;</li>
+                  <li>понимание, какие интерпретации повторяются;</li>
+                  <li>видимость того, какие нарративы усиливаются;</li>
+                  <li>представление о том, как меняется информационное поле во времени.</li>
+                </ul>
+              </div>
+            </div>
+            <div class="quote">News Intelligence помогает не просто находить новости, а <span class="highlight">понимать структуру информационной среды</span>.</div>
+          </div>
+        </section>
+      </div>
+
+      <div class="footer-nav">
+        <div class="nav-buttons">
+          <button class="nav-btn" id="prevBtn" type="button">← Назад</button>
+          <button class="nav-btn" id="nextBtn" type="button">Вперёд →</button>
+        </div>
+        <div class="progress" id="progress"></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const toc = document.getElementById('toc');
+    const progress = document.getElementById('progress');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    let currentIndex = 0;
+
+    function buildNavigation() {
+      slides.forEach((slide, index) => {
+        const title = slide.dataset.title || `Слайд ${index + 1}`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.innerHTML = `<span class="index">${String(index + 1).padStart(2, '0')}</span>${title}`;
+        button.addEventListener('click', () => setSlide(index));
+        toc.appendChild(button);
+
+        const dot = document.createElement('div');
+        dot.className = 'dot';
+        dot.addEventListener('click', () => setSlide(index));
+        progress.appendChild(dot);
+      });
+    }
+
+    function setSlide(index) {
+      currentIndex = Math.max(0, Math.min(index, slides.length - 1));
+      slides.forEach((slide, idx) => slide.classList.toggle('active', idx === currentIndex));
+      Array.from(toc.children).forEach((button, idx) => button.classList.toggle('active', idx === currentIndex));
+      Array.from(progress.children).forEach((dot, idx) => dot.classList.toggle('active', idx === currentIndex));
+      prevBtn.disabled = currentIndex === 0;
+      nextBtn.disabled = currentIndex === slides.length - 1;
+    }
+
+    prevBtn.addEventListener('click', () => setSlide(currentIndex - 1));
+    nextBtn.addEventListener('click', () => setSlide(currentIndex + 1));
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowRight' || event.key === 'PageDown') setSlide(currentIndex + 1);
+      if (event.key === 'ArrowLeft' || event.key === 'PageUp') setSlide(currentIndex - 1);
+      if (event.key === 'Home') setSlide(0);
+      if (event.key === 'End') setSlide(slides.length - 1);
+    });
+
+    buildNavigation();
+    setSlide(0);
+  </script>
+</body>
+</html>
