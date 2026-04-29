@@ -27,6 +27,21 @@ from app.services import (
 
 @dataclass(frozen=True, slots=True)
 class AppServices:
+    """Контейнер основных сервисов приложения (DI контейнер).
+    
+    Содержит все репозитории и сервисы, необходимые для работы приложения.
+    Создается один раз при инициализации приложения.
+    
+    Атрибуты:
+        source_repository: Доступ к источникам новостей
+        article_repository: Доступ к статьям
+        article_chunk_repository: Доступ к чанкам статей
+        narrative_analysis_repository: Доступ к снимкам нарративных анализов
+        narrative_article_analysis_repository: Доступ к анализам уровня статей
+        chunking_service: Разбиение статей на чанки
+        embedding_index_service: Управление индексом эмбеддингов
+        rag_service: Поиск и синтез ответов
+    """
     source_repository: SourceRepository
     article_repository: ArticleRepository
     article_chunk_repository: ArticleChunkRepository
@@ -38,6 +53,22 @@ class AppServices:
 
 
 def build_app_services(connection: Connection, settings: Settings) -> AppServices:
+    """Построить контейнер сервисов приложения.
+    
+    Инициализирует все репозитории и сервисы, применяя настройки окружения.
+    
+    Args:
+        connection: Соединение с SQLite БД
+        settings: Объект конфигурации приложения
+        
+    Returns:
+        Полностью инициализированный AppServices
+        
+    Примечания:
+        - Переранживатель создается опционально, если доступен
+        - LLM и эмбеддинги инициализируются из settings
+        - Все ошибки инициализации логируются но не прерывают работу
+    """
     source_repository = SourceRepository(connection)
     article_repository = ArticleRepository(connection)
     article_chunk_repository = ArticleChunkRepository(connection)

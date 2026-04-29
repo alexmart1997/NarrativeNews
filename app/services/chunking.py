@@ -8,15 +8,57 @@ from app.utils.text import estimate_word_count
 
 @dataclass(frozen=True, slots=True)
 class ChunkingConfig:
+    """Конфигурация для сервиса разбиения статей на чанки.
+    
+    Параметры регулируют баланс между размером контекста и точностью поиска:
+    - Больший target_chunk_size = больше контекста, но меньше точность
+    - Меньший min_chunk_size = больше чанков, но риск фрагментированности
+    
+    Атрибуты:
+        target_chunk_size: Целевой размер чанка в токенах (по умолчанию 700)
+        min_chunk_size: Минимальный размер чанка в токенах (по умолчанию 300)
+    """
     target_chunk_size: int = 700
     min_chunk_size: int = 300
 
 
 class ChunkingService:
+    """Сервис разбиения новостных статей на семантические чанки.
+    
+    Использует параграф-ориентированный подход:
+    - Разбивает статью по двойным переносам строк
+    - Группирует параграфы в чанки, стараясь достичь target_chunk_size
+    - Не разбивает параграфы посередине
+    - Гарантирует, что каждый чанк ≥ min_chunk_size
+    
+    Пример:
+        service = ChunkingService(ChunkingConfig(target_chunk_size=700))
+        chunks = service.chunk_article(article)
+        for chunk in chunks:
+            print(f"Чанк {chunk.chunk_index}: {len(chunk.chunk_text)} символов")
+    """
     def __init__(self, config: ChunkingConfig | None = None) -> None:
+        """Инициализация сервиса разбиения.
+        
+        Args:
+            config: Конфиг (если None, используется дефолтный)
+        """
         self.config = config or ChunkingConfig()
 
     def chunk_article(self, article: Article) -> list[ArticleChunkCreate]:
+        """Разбить статью на чанки.
+        
+        Args:
+            article: Статья для разбиения
+            
+        Returns:
+            Список чанков с индексами и позициями в исходном тексте
+            
+        Примечания:
+            - Если статья не имеет параграфов, вернет пустой список
+            - Каждому чанку проставляется порядковый номер (chunk_index)
+            - Позиции char_start/char_end указывают на исходный текст
+        """
         paragraphs = [paragraph.strip() for paragraph in article.body_text.split("\n\n") if paragraph.strip()]
         if not paragraphs:
             return []
@@ -79,6 +121,18 @@ class ChunkingService:
         char_start: int | None,
         char_end: int | None,
     ) -> ArticleChunkCreate:
+        """Построить чанк из списка параграфов.
+        
+        Args:
+            article_id: ID статьи, которой принадлежит чанк
+            chunk_index: Порядковый номер чанка в статье
+            parts: Список параграфов для объединения
+            char_start: Позиция начала в исходном тексте
+            char_end: Позиция конца в исходном тексте
+            
+        Returns:
+            ArticleChunkCreate с объединенным текстом и метаданными
+        """
         chunk_text = "\n\n".join(parts).strip()
         return ArticleChunkCreate(
             article_id=article_id,

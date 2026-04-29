@@ -18,7 +18,34 @@ TOKEN_RE = re.compile(r"[0-9A-Za-zА-Яа-яЁё]{2,}")
 
 
 class ArticleChunkRepository(BaseRepository):
+    """Репозиторий для управления семантическими чанками статей.
+    
+    Предоставляет методы для:
+    - Сохранения чанков при разбиении статей
+    - Векторизации чанков (эмбеддинги)
+    - Полнотекстового поиска (BM25)
+    - Семантического поиска (векторный)
+    - Гибридного поиска
+    
+    Примечания:
+        - Каждый чанк связан с article_id и имеет chunk_index
+        - Эмбеддинги хранятся отдельно и могут кешироваться
+        - Поддерживается FTS (Full-Text Search) для быстрого BM25
+        - Все поиски фильтруют по canonical статьям
+    """
     def create_many(self, payloads: list[ArticleChunkCreate]) -> list[ArticleChunk]:
+        """Создать несколько чанков одной статьи.
+        
+        Args:
+            payloads: Список чанков для создания
+            
+        Returns:
+            Список созданных чанков с ID из БД
+            
+        Примечания:
+            - Используется batch-вставка для эффективности
+            - Сохраняет token_count для каждого чанка
+        """
         created: list[ArticleChunk] = []
         for payload in payloads:
             cursor = self.connection.execute(
@@ -44,6 +71,14 @@ class ArticleChunkRepository(BaseRepository):
         return created
 
     def list_by_article_id(self, article_id: int) -> list[ArticleChunk]:
+        """Получить все чанки одной статьи.
+        
+        Args:
+            article_id: ID статьи
+            
+        Returns:
+            Список чанков в порядке возрастания индекса (chunk_index)
+        """
         rows = self._fetch_all(
             """
             SELECT *
@@ -56,6 +91,17 @@ class ArticleChunkRepository(BaseRepository):
         return [self._row_to_chunk(row) for row in rows]
 
     def list_chunks_without_embeddings(self, model_name: str, limit: int = 100) -> list[ArticleChunk]:
+        """Получить чанки, которым еще не созданы эмбеддинги.
+        
+        Используется для batch-генерации эмбеддингов.
+        
+        Args:
+            model_name: Название модели для эмбеддингов
+            limit: Максимальное количество чанков
+            
+        Returns:
+            Список чанков без эмбеддингов, отсортированный по ID
+        """
         rows = self._fetch_all(
             """
             SELECT ac.*
@@ -77,6 +123,20 @@ class ArticleChunkRepository(BaseRepository):
         model_name: str,
         embedding: list[float],
     ) -> ArticleChunkEmbedding:
+        """Сохранить или обновить эмбеддинг чанка.
+        
+        Args:
+            chunk_id: ID чанка
+            model_name: Название модели эмбеддингов
+            embedding: Вектор эмбеддинга (список float'ов)
+            
+        Returns:
+            Объект ArticleChunkEmbedding с сохраненным вектором
+            
+        Примечания:
+            - Если эмбеддинг уже существует, он будет перезаписан
+            - Размер вектора автоматически вычисляется и сохраняется
+        """
         payload = json.dumps(embedding, ensure_ascii=False)
         self.connection.execute(
             """
@@ -110,6 +170,18 @@ class ArticleChunkRepository(BaseRepository):
         limit: int = 10,
         source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
+        """Поиск чанков по лексико-семантическому запросу.
+        
+        Args:
+            query: Текстовый запрос
+            date_from: ISO-формат начальной даты
+            date_to: ISO-формат конечной даты
+            limit: Максимальное количество результатов
+            source_domains: Список доменов для фильтрации
+            
+        Returns:
+            Список результатов с оценками релевантности
+        """
         return self.search_chunks_lexical(query, date_from, date_to, limit, source_domains=source_domains)
 
     def search_chunks_lexical(
@@ -120,6 +192,25 @@ class ArticleChunkRepository(BaseRepository):
         limit: int = 20,
         source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
+        """Полнотекстовый поиск чанков (BM25).
+        
+        Использует встроенный SQLite FTS для быстрого поиска по ключевым словам.
+        
+        Args:
+            query: Текстовый запрос с поддержкой операторов FTS
+            date_from: ISO-формат начальной даты
+            date_to: ISO-формат конечной даты
+            limit: Максимальное количество результатов
+            source_domains: Список доменов для фильтрации
+            
+        Returns:
+            Список результатов, отсортированный по BM25-оценке и дате
+            
+        Примечания:
+            - Включает только канонические статьи
+            - Результаты отсортированы по релевантности (лучше первыми)
+            - Затем вторично отсортированы по дате (новее сверху)
+        """
         date_from = normalize_datetime_bound(date_from) or date_from
         date_to = normalize_datetime_bound(date_to) or date_to
         tokens = self._tokenize(query)

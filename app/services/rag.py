@@ -161,11 +161,32 @@ NOISE_PATTERNS = (
 
 @dataclass(frozen=True, slots=True)
 class RAGSearchResult:
+    """Результат RAG-поиска с чанками и статьями.
+    
+    Атрибуты:
+        chunks: Список релевантных чанков, отсортированный по релевантности
+        articles: Список связанных исходных статей
+    """
     chunks: list[ChunkSearchResult]
     articles: list[Article]
 
 
 class RAGService:
+    """Сервис гибридного поиска с ранжированием и синтезом ответов.
+    
+    Реализует многоступенчатый RAG-пайплайн:
+    1. Гибридный retrieval (семантический + лексический поиск)
+    2. Переранжирование через cross-encoder
+    3. Фильтрация по релевантности темы
+    4. Диверсификация результатов
+    5. Синтез ответов через LLM
+    
+    Примечания:
+        - Использует BM25 для лексического поиска
+        - Поддерживает векторный поиск через эмбеддинги
+        - Cross-encoder переранжирование для улучшения качества
+        - Все поиски включают только канонические статьи
+    """
     def __init__(
         self,
         article_chunk_repository: ArticleChunkRepository,
@@ -176,6 +197,17 @@ class RAGService:
         hybrid_limit: int = 24,
         rerank_limit: int = 8,
     ) -> None:
+        """Инициализация RAG-сервиса.
+        
+        Args:
+            article_chunk_repository: Репозиторий для доступа к чанкам
+            article_repository: Репозиторий для доступа к статьям
+            llm_client: LLM для генерации ответов (опционально)
+            embedding_client: Клиент для эмбеддингов (опционально)
+            reranker: Переранжиратель (опционально)
+            hybrid_limit: Максимум кандидатов при гибридном retrieval
+            rerank_limit: Максимум кандидатов для переранжирования
+        """
         self.article_chunk_repository = article_chunk_repository
         self.article_repository = article_repository
         self.llm_client = llm_client
@@ -192,6 +224,23 @@ class RAGService:
         limit: int = 10,
         source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
+        """Найти релевантные чанки (только поиск без ответа).
+        
+        Args:
+            query: Текстовый запрос
+            date_from: ISO-формат начальной даты
+            date_to: ISO-формат конечной даты
+            limit: Максимальное количество результатов
+            source_domains: Список доменов для фильтрации
+            
+        Returns:
+            Список чанков, отсортированный по релевантности
+            
+        Примечания:
+            - Применяет многоступенчатую фильтрацию
+            - Результаты диверсифицированы по статьям
+            - Каждое ограничение увеличивается внутри для лучшего качества
+        """
         query_terms = self._extract_query_terms(query)
         if not query_terms:
             return []
@@ -216,6 +265,18 @@ class RAGService:
         limit: int = 10,
         source_domains: list[str] | None = None,
     ) -> RAGSearchResult:
+        """Поиск с возвратом чанков и связанных статей.
+        
+        Args:
+            query: Текстовый запрос
+            date_from: ISO-формат начальной даты
+            date_to: ISO-формат конечной даты
+            limit: Максимальное количество чанков
+            source_domains: Список доменов для фильтрации
+            
+        Returns:
+            RAGSearchResult с чанками и полными статьями
+        """
         chunks = self.search_chunks(query, date_from, date_to, limit, source_domains=source_domains)
         articles = self._select_source_articles(chunks, max_articles=5)
         return RAGSearchResult(chunks=chunks, articles=articles)
@@ -229,6 +290,22 @@ class RAGService:
         include_debug_chunks: bool = False,
         source_domains: list[str] | None = None,
     ) -> RAGAnswerResult:
+        """Найти чанки и сгенерировать синтезированный ответ через LLM.
+        
+        Args:
+            query: Текстовый запрос
+            date_from: ISO-формат начальной даты
+            date_to: ISO-формат конечной даты
+            limit: Максимальное количество чанков для контекста
+            include_debug_chunks: Включить найденные чанки в результат
+            source_domains: Список доменов для фильтрации
+            
+        Returns:
+            RAGAnswerResult с синтезированным ответом и источниками
+            
+        Требует:
+            - llm_client должен быть установлен
+        """
         chunks = self.search_chunks(query, date_from, date_to, limit, source_domains=source_domains)
         source_articles = self._select_source_articles(chunks, max_articles=5)
         summary_text = self._generate_summary(query, chunks)
@@ -247,7 +324,7 @@ class RAGService:
         limit: int,
         source_domains: list[str] | None = None,
     ) -> list[ChunkSearchResult]:
-        lexical_query = self._build_lexical_query(query_terms)
+        """Выполнить гибридный retrieval (BM25 + векторный поиск).
         lexical_rows = self.article_chunk_repository.search_chunks_lexical(
             lexical_query,
             date_from,
